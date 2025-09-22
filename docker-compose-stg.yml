@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+
+#   mysql:
+#     build: ./sql
+#     image: aibt_sql_${stg}
+#     container_name: aibt_mysql_${stg}
+#     hostname: ${DB_HOST_STG}
+#     environment:
+#       MYSQL_ROOT_PASSWORD: root
+#       MYSQL_DATABASE: ${DB_NAME}
+#       MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_STG}
+#       MYSQL_PORT: ${MYSQL_PORT_STG}
+#       DB_HOST: ${DB_HOST_STG}
+#     ports:
+#       - "${MYSQL_PORT_STG}:${MYSQL_CONTAINER_PORT_STG}"
+#     volumes:
+#       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+#       - ./sql/my_stg.cnf:/etc/mysql/my.cnf
+#       # - aibt_mysql_data:/var/lib/mysql
+#     healthcheck:
+#       test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
+#       interval: 5s
+#       timeout: 60s
+#       retries: 3
+#     networks:
+#       - ai-network-stg
+#     restart: always
+
+  frontend:
+    container_name: aibt_frontend_${stg}
+    build: ./frontend
+    image: aibt_frontend_${stg}
+    ports:
+      - "${FRONT_CONTAINER_PORT_STG}:${FRONT_CONTAINER_PORT_STG}"
+    volumes:
+      - ./frontend:/var/www/frontend
+    env_file: .env
+    environment:
+      - REACT_APP_NODE_ENV=STG #REACT App.js
+      - PUBLIC_URL=/aibt-stg # static/js/bundle.js
+      - PORT=${FRONT_CONTAINER_PORT_STG} # 3010
+      - FRONT_CONTAINER_PORT=${FRONT_CONTAINER_PORT_STG}
+    networks:
+      - ai-network-stg
+    restart: always
+
+#   backend:
+#     container_name: aibt_backend_${stg}
+#     build: ./backend
+#     image: aibt_backend_${stg}
+#     ports:
+#       - "${BACKEND_CONTAINER_PORT_STG}:${BACKEND_CONTAINER_PORT_STG}"
+#     # command: uwsgi --ini /var/www/backend/uwsgi.ini
+#     command: python /var/www/backend/AIBT.py
+#     environment:
+#       - BACKEND_CONTAINER_PORT=${BACKEND_CONTAINER_PORT_STG}
+#       - MYSQL_CONTAINER_PORT=${MYSQL_CONTAINER_PORT_STG}
+#       - DB_HOST=${DB_HOST_STG}
+#       - SERVER_ADDRESS=${SERVER_ADDRESS_STG}
+#       - NGINX_PORT=${NGINX_PORT_STG}
+#     volumes:
+#       - ./backend:/var/www/backend
+#       - ./ai_server/output_txt_files:/mnt/output_txt_files
+#       - /var/run/docker.sock:/var/run/docker.sock
+#       - socket:/tmp
+#     tty: true
+#     depends_on:
+#       - mysql
+#     env_file: .env
+#     networks:
+#       - ai-network-stg
+#     restart: always
+
+  nginx:
+    image: nginx:1.24
+    container_name: aibt_nginx_${stg}
+    env_file: .env
+    networks:
+      - ai-network-stg
+    environment:
+      BACKEND_CONTAINER_PORT: ${BACKEND_CONTAINER_PORT_STG}
+      SERVER_ADDRESS: ${SERVER_ADDRESS_STG}
+      NGINX_API_PORT: ${NGINX_PORT_API_STG}
+      NGINX_PORT: ${NGINX_PORT_STG}
+      FRONT_CONTAINER_PORT: ${FRONT_CONTAINER_PORT_STG}
+      AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_STG}
+      AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_STG}
+      TAG: ${stg}
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./nginx:/etc/nginx/templates
+      - ./backend:/var/www/backend
+      - ./ai_server:/var/www/ai_server
+      - ./nginx/log:/var/log/nginx
+      - ./nginx/html:/usr/share/nginx/html
+      - socket:/tmp
+    ports:
+      - "${NGINX_PORT_API_STG}:${NGINX_PORT_API_STG}"
+      - "${NGINX_PORT_STG}:${NGINX_PORT_STG}"
+    depends_on:
+      - frontend
+    tty: true
+    restart: always
+
+#   db_to_queue:
+#     build: ./db_to_queue
+#     image: aibt_db_to_queue_${stg}
+#     container_name: aibt_db_to_queue_${stg}
+#     environment:
+#       SERVER_ADDRESS: ${SERVER_ADDRESS_STG}
+#       NGINX_PORT: ${NGINX_PORT_STG}
+#       MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_STG}
+#       AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_STG}
+#       AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_STG}
+#       DB_HOST: ${DB_HOST_STG}
+#     depends_on:
+#       mysql:
+#         condition: service_healthy
+#       transcription_1:
+#         condition: service_started
+#     env_file: .env
+#     ports:
+#       - "${db_to_queue_CONTAINER_PORT_STG}:${db_to_queue_CONTAINER_PORT_STG}"
+#     volumes:
+#       - ./db_to_queue/logs/db_to_queue:/logs
+#     networks:
+#       - ai-network-stg
+#     restart: always
+
+
+networks:
+  ai-network-stg:
+    external: true
+
+volumes:
+  socket:
+    name: socket_volume_stg
+  # aibt_mysql_data:
+  #   name: aibt_mysql_data_volume_stg
+  model-cache-stg:
+    name: model_cache_volume_stg

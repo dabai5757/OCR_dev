@@ -1,0 +1,15 @@
+__pycache__/
+*.log
+*.pyc
+.vscode/settings.json
+nginx/log/error.log
+nginx/log/access.log
+backend/app.log
+backend/__pycache__/AIBT.cpython-311.pyc
+.env
+*.wav
+*.mp4
+.coverage
+test_output/
+*/test_output/
+!*/test_output/.gitkeep

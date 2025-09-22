@@ -1,0 +1,86 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: backend",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5674
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/backend",
+                    "remoteRoot": "/var/www/backend"
+                }
+            ],
+            "justMyCode": false,
+            "showReturnValue": true,
+            "redirectOutput": true,
+            "jinja": true,
+            "subProcess": true,
+            "logToFile": true
+        },
+        {
+            "name": "Python: db_to_queue",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5673
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/db_to_queue",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": false,
+            "showReturnValue": true,
+            "redirectOutput": true,
+            "django": false,
+            "jinja": true,
+            "subProcess": true,
+            "logToFile": true
+        },
+        {
+            "name": "Python: ai_server",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5675
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/ai_server",
+                    "remoteRoot": "/var/www/ai_server"
+                }
+            ],
+            "justMyCode": false,
+            "showReturnValue": true,
+            "redirectOutput": true,
+            "django": false,
+            "jinja": true,
+            "subProcess": true,
+            "logToFile": true
+        },
+        {
+            "name": "Python: Remote Attach Test",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5658
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/ai_server",
+                    "remoteRoot": "/var/www/ai_server"
+                }
+            ],
+            "justMyCode": false
+        }
+    ]
+}

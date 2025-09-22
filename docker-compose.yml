@@ -1,0 +1,145 @@
+version: '3.8'
+
+services:
+
+  # mysql:
+  #   build: ./sql
+  #   image: aibt_sql_${dev}
+  #   container_name: aibt_mysql_${dev}
+  #   hostname: ${DB_HOST_DEV}
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: root
+  #     MYSQL_DATABASE: ${DB_NAME}
+  #     MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_DEV}
+  #     MYSQL_PORT: ${MYSQL_PORT_DEV}
+  #     DB_HOST: ${DB_HOST_DEV}
+  #   ports:
+  #     - "${MYSQL_PORT_DEV}:${MYSQL_CONTAINER_PORT_DEV}"
+  #   volumes:
+  #     - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+  #     - ./sql/my_dev.cnf:/etc/mysql/my.cnf
+  #     # - aibt_mysql_data:/var/lib/mysql
+  #   # healthcheck:
+  #   #   test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
+  #   #   interval: 3s
+  #   #   timeout: 60s
+  #   #   retries: 3
+  #   networks:
+  #     - ai-network
+  #   restart: always
+
+  frontend:
+    container_name: aibt_frontend_${dev}
+    build: ./frontend
+    image: aibt_frontend_${dev}
+    ports:
+      - "${FRONT_CONTAINER_PORT_DEV}:${FRONT_CONTAINER_PORT_DEV}"
+    volumes:
+      - ./frontend:/var/www/frontend
+    env_file: .env
+    environment:
+      - REACT_APP_NODE_ENV=DEV #REACT App.js
+      - PUBLIC_URL=/aibt-dev # static/js/bundle.js
+      - PORT=${FRONT_CONTAINER_PORT_DEV} # 3010
+      - FRONT_CONTAINER_PORT=${FRONT_CONTAINER_PORT_DEV}
+    networks:
+      - ai-network
+    restart: always
+
+  # backend:
+  #   container_name: aibt_backend_${dev}
+  #   build: ./backend
+  #   image: aibt_backend_${dev}
+  #   ports:
+  #     - "${BACKEND_CONTAINER_PORT_DEV}:${BACKEND_CONTAINER_PORT_DEV}"
+  #     - "5674:5674"
+  #   # command: uwsgi --ini /var/www/backend/uwsgi.ini
+  #   command: python /var/www/backend/AIBT.py
+  #   environment:
+  #     - BACKEND_CONTAINER_PORT=${BACKEND_CONTAINER_PORT_DEV}
+  #     - MYSQL_CONTAINER_PORT=${MYSQL_CONTAINER_PORT_DEV}
+  #     - DB_HOST=${DB_HOST_DEV}
+  #     - SERVER_ADDRESS=${SERVER_ADDRESS_DEV}
+  #     - NGINX_PORT=${NGINX_PORT_DEV}
+  #     - TAG=${dev}
+  #   volumes:
+  #     - ./backend:/var/www/backend
+  #     - ./ai_server/output_txt_files:/mnt/output_txt_files
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - socket:/tmp
+  #     - ./test:/var/www/test
+  #   tty: true
+  #   depends_on:
+  #     - mysql
+  #   env_file: .env
+  #   networks:
+  #     - ai-network
+  #   restart: always
+
+  nginx:
+    image: nginx:1.24
+    container_name: aibt_nginx_${dev}
+    env_file: .env
+    networks:
+      - ai-network
+    environment:
+      BACKEND_CONTAINER_PORT: ${BACKEND_CONTAINER_PORT_DEV}
+      SERVER_ADDRESS: ${SERVER_ADDRESS_DEV}
+      NGINX_API_PORT: ${NGINX_PORT_API_DEV}
+      NGINX_PORT: ${NGINX_PORT_DEV}
+      FRONT_CONTAINER_PORT: ${FRONT_CONTAINER_PORT_DEV}
+      AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_DEV}
+      AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_DEV}
+      TAG: ${dev}
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./nginx:/etc/nginx/templates
+      - ./backend:/var/www/backend
+      - ./ai_server:/var/www/ai_server
+      - ./nginx/log:/var/log/nginx
+      - ./nginx/html:/usr/share/nginx/html
+      - socket:/tmp
+    ports:
+      - "${NGINX_PORT_API_DEV}:${NGINX_PORT_API_DEV}"
+      - "${NGINX_PORT_DEV}:${NGINX_PORT_DEV}"
+    depends_on:
+      - frontend
+    tty: true
+    restart: always
+
+  # db_to_queue:
+  #   build: ./db_to_queue
+  #   image: aibt_db_to_queue_${dev}
+  #   container_name: aibt_db_to_queue_${dev}
+  #   environment:
+  #     SERVER_ADDRESS: ${SERVER_ADDRESS_DEV}
+  #     NGINX_PORT: ${NGINX_PORT_DEV}
+  #     MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_DEV}
+  #     AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_DEV}
+  #     AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_DEV}
+  #     DB_HOST: ${DB_HOST_DEV}
+  #     TAG: ${dev}
+  #   depends_on:
+  #     # mysql:
+  #     #   condition: service_healthy
+  #     transcription_1:
+  #       condition: service_started
+  #   env_file: .env
+  #   ports:
+  #     - "${db_to_queue_CONTAINER_PORT_DEV}:${db_to_queue_CONTAINER_PORT_DEV}"
+  #     - "5673:5673"
+  #   volumes:
+  #     - ./db_to_queue/logs/db_to_queue:/logs
+  #   networks:
+  #     - ai-network
+  #   restart: always
+
+networks:
+  ai-network:
+    external: true
+
+volumes:
+  socket:
+    name: socket_volume_dev
+  model-cache:
+    name: model_cache_volume_dev

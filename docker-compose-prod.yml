@@ -1,0 +1,226 @@
+version: '3.8'
+
+services:
+
+  mysql:
+    build: ./sql
+    image: aibt_sql_${prod}
+    container_name: aibt_mysql_${prod}
+    hostname: ${DB_HOST_PROD}
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_PROD}
+      MYSQL_PORT: ${MYSQL_PORT_PROD}
+      DB_HOST: ${DB_HOST_PROD}
+    ports:
+      - "${MYSQL_PORT_PROD}:${MYSQL_CONTAINER_PORT_PROD}"
+    volumes:
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./sql/my_prod.cnf:/etc/mysql/my.cnf
+      # - aibt_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 60s
+      retries: 3
+    networks:
+      - ai-network-prod
+    restart: always
+
+  frontend:
+    container_name: aibt_frontend_${prod}
+    build: ./frontend
+    image: aibt_frontend_${prod}
+    ports:
+      - "${FRONT_CONTAINER_PORT_PROD}:${FRONT_CONTAINER_PORT_PROD}"
+    volumes:
+      - ./frontend:/var/www/frontend
+    env_file: .env
+    environment:
+      - REACT_APP_NODE_ENV=PROD #REACT App.js
+      - PUBLIC_URL=/aibt-prod # static/js/bundle.js
+      - PORT=${FRONT_CONTAINER_PORT_PROD} # 3010
+      - FRONT_CONTAINER_PORT=${FRONT_CONTAINER_PORT_PROD}
+    networks:
+      - ai-network-prod
+    restart: always
+
+  backend:
+    container_name: aibt_backend_${prod}
+    build: ./backend
+    image: aibt_backend_${prod}
+    ports:
+      - "${BACKEND_CONTAINER_PORT_PROD}:${BACKEND_CONTAINER_PORT_PROD}"
+    # command: uwsgi --ini /var/www/backend/uwsgi.ini
+    command: python /var/www/backend/AIBT.py
+    environment:
+      - BACKEND_CONTAINER_PORT=${BACKEND_CONTAINER_PORT_PROD}
+      - MYSQL_CONTAINER_PORT=${MYSQL_CONTAINER_PORT_PROD}
+      - DB_HOST=${DB_HOST_PROD}
+      - SERVER_ADDRESS=${SERVER_ADDRESS_PROD}
+      - NGINX_PORT=${NGINX_PORT_PROD}
+    volumes:
+      - ./backend:/var/www/backend
+      - ./ai_server/output_txt_files:/mnt/output_txt_files
+      - /var/run/docker.sock:/var/run/docker.sock
+      - socket:/tmp
+    tty: true
+    depends_on:
+      - mysql
+    env_file: .env
+    networks:
+      - ai-network-prod
+    restart: always
+
+  nginx:
+    image: nginx:1.24
+    container_name: aibt_nginx_${prod}
+    env_file: .env
+    networks:
+      - ai-network-prod
+    environment:
+      BACKEND_CONTAINER_PORT: ${BACKEND_CONTAINER_PORT_PROD}
+      SERVER_ADDRESS: ${SERVER_ADDRESS_PROD}
+      NGINX_API_PORT: ${NGINX_PORT_API_PROD}
+      NGINX_PORT: ${NGINX_PORT_PROD}
+      FRONT_CONTAINER_PORT: ${FRONT_CONTAINER_PORT_PROD}
+      AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_PROD}
+      AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_PROD}
+      TAG: ${prod}
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./nginx:/etc/nginx/templates
+      - ./backend:/var/www/backend
+      - ./ai_server:/var/www/ai_server
+      - ./nginx/log:/var/log/nginx
+      - ./nginx/html:/usr/share/nginx/html
+      - socket:/tmp
+    ports:
+      - "${NGINX_PORT_API_PROD}:${NGINX_PORT_API_PROD}"
+      - "${NGINX_PORT_PROD}:${NGINX_PORT_PROD}"
+    depends_on:
+      - transcription_1
+      - frontend
+    tty: true
+    restart: always
+
+  db_to_queue:
+    build: ./db_to_queue
+    image: aibt_db_to_queue_${prod}
+    container_name: aibt_db_to_queue_${prod}
+    environment:
+      SERVER_ADDRESS: ${SERVER_ADDRESS_PROD}
+      NGINX_PORT: ${NGINX_PORT_PROD}
+      MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_PROD}
+      AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_PROD}
+      AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_PROD}
+      DB_HOST: ${DB_HOST_PROD}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      transcription_1:
+        condition: service_started
+    env_file: .env
+    ports:
+      - "${db_to_queue_CONTAINER_PORT_PROD}:${db_to_queue_CONTAINER_PORT_PROD}"
+    volumes:
+      - ./db_to_queue/logs/db_to_queue:/logs
+    networks:
+      - ai-network-prod
+    restart: always
+
+  transcription_1:
+    build: ./ai_server
+    image: aibt_transcription_${prod}
+    container_name: aibt_transcription_1_${prod}
+    depends_on:
+      - mysql
+    ports:
+      - "${AI_SERVER_CONTAINER_PORT_PROD}:${AI_SERVER_CONTAINER_PORT_PROD}"
+    volumes:
+      - ./ai_server:/var/www/ai_server
+      - ./backend/input_audio_files:/mnt/input_audio_files
+      # - /mnt/d/Transcription/Systranfaster_whisper_large_v2:/app/models/faster_whisper_large_v2
+      - model-cache-prod:/root/.cache/whisper
+      - ./ai_server/logs:/logs
+    tty: true
+    command: python3 translation.py
+    environment:
+      # NVIDIA_VISIBLE_DEVICES: 1
+      # CUDA_VISIBLE_DEVICES: 1
+      NVIDIA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 0
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_PROD}
+      AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_PROD}
+      SERVER_ADDRESS: ${SERVER_ADDRESS_PROD}
+      NGINX_PORT: ${NGINX_PORT_PROD}
+      DB_HOST: ${DB_HOST_PROD}
+      BACKEND_CONTAINER_PORT: ${BACKEND_CONTAINER_PORT_PROD}
+      MODEL_URL: https://huggingface.co/Systran/faster-whisper-large-v2/resolve/main
+    env_file: .env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ['1']
+    runtime: nvidia
+    networks:
+      - ai-network-prod
+    restart: always
+
+  transcription_api:
+    build: ./ai_server
+    image: aibt_transcription_api_${prod}
+    container_name: aibt_transcription_api_${prod}
+    depends_on:
+      - mysql
+    ports:
+      - "${AI_SERVER_CONTAINER_API_PORT_PROD}:${AI_SERVER_CONTAINER_API_PORT_PROD}"
+    volumes:
+      - ./ai_server:/var/www/ai_server
+      - ./backend/input_audio_files:/mnt/input_audio_files
+      - model-cache-prod:/root/.cache/whisper
+      - ./ai_server/logs:/logs
+    tty: true
+    command: python3 translation_api.py
+    environment:
+      # NVIDIA_VISIBLE_DEVICES: all
+      # NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      NVIDIA_VISIBLE_DEVICES: 1
+      CUDA_VISIBLE_DEVICES: 1
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_PROD}
+      AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_PROD}
+      SERVER_ADDRESS: ${SERVER_ADDRESS_PROD}
+      NGINX_PORT: ${NGINX_PORT_PROD}
+      DB_HOST: ${DB_HOST_PROD}
+      BACKEND_CONTAINER_PORT: ${BACKEND_CONTAINER_PORT_PROD}
+      MODEL_URL: https://huggingface.co/Systran/faster-whisper-large-v2/resolve/main
+    env_file: .env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["0"]
+    runtime: nvidia
+    networks:
+      - ai-network-prod
+    restart: always
+
+networks:
+  ai-network-prod:
+    external: true
+
+volumes:
+  socket:
+    name: socket_volume_prod
+  # aibt_mysql_data:
+  #   name: aibt_mysql_data_volume_prod
+  model-cache-prod:
+    name: model_cache_volume_prod

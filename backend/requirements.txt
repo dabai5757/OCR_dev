@@ -1,0 +1,13 @@
+flask==3.0.2
+numba
+flask_cors
+mysql-connector-python==8.3.0
+uwsgi==2.0.24
+librosa
+soundfile
+flask[async]
+APScheduler==3.10.4
+debugpy==1.8.7
+coverage
+pytest
+pytest-cov
