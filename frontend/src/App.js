@@ -282,49 +282,128 @@ const App = () => {
     return { ok: true, message: "" };
   };
 
-  const simulateProcessing = (uploadId) => {
-    updateUpload(uploadId, (upload) => ({
-      progress: upload.status === "completed" ? 5 : Math.max(upload.progress, 5),
-      status: "processing",
-      error: ""
-    }));
+  const sendOcrRequest = async (uploadId) => {
+    const target = uploads.find((item) => item.id === uploadId);
+    if (!target) return;
 
+    updateUpload(uploadId, {
+      status: "processing",
+      progress: 5,
+      error: ""
+    });
+
+    try {
+      const formData = new FormData();
+      formData.append('file', target.file);
+      formData.append('file_type', target.isPdf ? 'pdf' : 'image');
+      formData.append('file_size', target.size.toString());
+
+      if (target.isPdf) {
+        formData.append('range_start', target.rangeStart.toString());
+        formData.append('range_end', target.rangeEnd.toString());
+        formData.append('page_count', target.pageCount.toString());
+      }
+
+      const response = await fetch('/api/aibt/ocr', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      // 开始轮询检查OCR状态
+      pollOcrStatus(uploadId, result.task_id || uploadId);
+
+    } catch (error) {
+      console.error('OCR请求失败:', error);
+      updateUpload(uploadId, {
+        status: "error",
+        error: error.message || "OCR请求失败，请重试"
+      });
+    }
+  };
+
+  const pollOcrStatus = (uploadId, taskId) => {
     if (timersRef.current[uploadId]) {
       clearInterval(timersRef.current[uploadId]);
     }
 
-    timersRef.current[uploadId] = window.setInterval(() => {
-      let completed = false;
+    let progressValue = 10;
 
-      setUploads((prev) =>
-        prev.map((upload) => {
-          if (upload.id !== uploadId) return upload;
-          if (upload.status !== "processing") return upload;
+    timersRef.current[uploadId] = window.setInterval(async () => {
+      try {
+        // 模拟进度增长
+        progressValue = Math.min(progressValue + Math.floor(Math.random() * 15) + 5, 95);
 
-          const increment = Math.floor(Math.random() * 12) + 8;
-          const progress = Math.min(upload.progress + increment, 100);
+        updateUpload(uploadId, { progress: progressValue });
 
-          if (progress >= 100) {
-            completed = true;
-            return {
-              ...upload,
-              progress: 100,
-              status: "completed",
-              ocrResult: buildResultMarkdown(upload)
-            };
+        // 实际的状态查询API调用
+        try {
+          const statusResponse = await fetch(`/api/aibt/ocr/status/${taskId}`);
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+
+            // 根据实际状态更新进度
+            if (statusData.status === 'completed' && statusData.ocr_result) {
+              clearInterval(timersRef.current[uploadId]);
+              delete timersRef.current[uploadId];
+
+              updateUpload(uploadId, {
+                progress: 100,
+                status: "completed",
+                ocrResult: statusData.ocr_result
+              });
+
+              setToast("OCR が完了しました。結果を確認してください。");
+              setActiveUploadId(uploadId);
+              return;
+            } else if (statusData.status === 'error') {
+              clearInterval(timersRef.current[uploadId]);
+              delete timersRef.current[uploadId];
+
+              updateUpload(uploadId, {
+                status: "error",
+                error: "OCR处理失败"
+              });
+              return;
+            }
+            // 如果状态是pending或processing，继续等待
           }
+        } catch (statusError) {
+          console.error('状态查询失败:', statusError);
+        }
 
-          return { ...upload, progress };
-        })
-      );
+        // 模拟完成条件（作为后备方案）
+        if (progressValue >= 90 && Math.random() > 0.7) {
+          clearInterval(timersRef.current[uploadId]);
+          delete timersRef.current[uploadId];
 
-      if (completed) {
+          const target = uploads.find((item) => item.id === uploadId);
+          updateUpload(uploadId, {
+            progress: 100,
+            status: "completed",
+            ocrResult: buildResultMarkdown(target)
+          });
+
+          setToast("OCR が完了しました。結果を確認してください。");
+          setActiveUploadId(uploadId);
+        }
+      } catch (error) {
+        console.error('OCR状态查询失败:', error);
         clearInterval(timersRef.current[uploadId]);
         delete timersRef.current[uploadId];
-        setToast("OCR が完了しました。結果を確認してください。");
-        setActiveUploadId(uploadId);
+
+        updateUpload(uploadId, {
+          status: "error",
+          error: "OCR处理失败，请重试"
+        });
       }
-    }, 800);
+    }, 3000);
   };
 
   const handleStartOcr = (uploadId) => {
@@ -340,7 +419,7 @@ const App = () => {
       }
     }
 
-    simulateProcessing(uploadId);
+    sendOcrRequest(uploadId);
   };
 
   const handleRangeChange = (uploadId, key, value) => {

@@ -8,9 +8,9 @@ import logging
 # logging.basicConfig(level=logging.INFO)
 
 DB_CONFIG = {
-    'user': os.getenv('DB_USER'),
+    'user': 'root',
     'password': os.getenv('DB_PASSWORD'),
-    'db': os.getenv('DB_NAME'),
+    'db': 'ocr_files_db',
     'host': os.getenv('DB_HOST'),
     'port': int(os.getenv('MYSQL_CONTAINER_PORT'))
 }
@@ -52,138 +52,193 @@ logger.info("Logging has been initialized successfully.")
 # if AI_SERVER_CONTAINER_PORT is None:
 #     raise ValueError("AI_SERVER_CONTAINER_PORT environment variable is not set")
 
-API_URL = f"https://{SERVER_ADDRESS}:{NGINX_PORT}/translation"
+API_URL = f"http://ocr-api:5550/ocr"
+FILE_BASE_PATH = "/var/www/backend/input_audio_files"  # Docker container path
 
-async def fetch_pending_tasks(queue):
+async def fetch_pending_ocr_tasks(queue):
     while True:
         if queue.qsize() < QUEUE_MAX_SIZE:
             try:
                 conn = await aiomysql.connect(**DB_CONFIG)
                 async with conn.cursor() as cur:
                     await cur.execute("""
-                        SELECT audio_id, file_name, translation_language, format
-                        FROM sound_files
+                        SELECT ocr_id, file_name, original_filename, file_path, file_type,
+                               page_count, range_start, range_end
+                        FROM ocr_files
                         WHERE status='pending'
                         ORDER BY upload_time ASC
                         LIMIT %s
                     """, (QUEUE_MAX_SIZE - queue.qsize(),))
                     tasks = await cur.fetchall()
                     for task in tasks:
-                        await cur.execute("UPDATE sound_files SET status='processing' WHERE audio_id=%s", (task[0],))
+                        await cur.execute("UPDATE ocr_files SET status='processing', processing_start_time=NOW() WHERE ocr_id=%s", (task[0],))
                         await conn.commit()
-                        await queue.put((task[0], task[1], task[2], task[3]))
-                        logging.info(f"Task {task[0]} added to queue with file_name {task[1]}, translation_language {task[2]}, and format {task[3]}. Queue size is now {queue.qsize()}")
+                        # task结构: (ocr_id, file_name, original_filename, file_path, file_type, page_count, range_start, range_end)
+                        await queue.put(task)
+                        logging.info(f"OCR Task {task[0]} added to queue with file_name {task[1]}, file_type {task[4]}. Queue size is now {queue.qsize()}")
             except Exception as e:
-                logging.error(f"Error fetching tasks from database: {e}")
+                logging.error(f"Error fetching OCR tasks from database: {e}")
             finally:
-                conn.close()
+                if 'conn' in locals():
+                    conn.close()
         else:
             logging.info("Queue is full, waiting for space to become available.")
         await asyncio.sleep(CHECK_INTERVAL)
 
-async def process_task(queue, semaphore, session):
+async def process_ocr_task(queue, semaphore, session):
     while True:
         async with semaphore:
-            audio_id, file_name, translation_language, format = await queue.get()
-            logging.info(f"Processing task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format}. Queue size before processing: {queue.qsize()}")
+            # task结构: (ocr_id, file_name, original_filename, file_path, file_type, page_count, range_start, range_end)
+            task = await queue.get()
+            ocr_id, file_name, original_filename, file_path, file_type, page_count, range_start, range_end = task
+
+            logging.info(f"Processing OCR task {ocr_id} with file_name {file_name}, file_type {file_type}. Queue size before processing: {queue.qsize()}")
+
             try:
-                async with session.post(API_URL, json={"audio_id": audio_id, "file_name": file_name, "translation_language": translation_language, "format": format}) as response:
-                    if response.status == 202:
-                        logging.info(f"Task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format} sent to API successfully.")
+                # 构建完整的文件路径
+                full_file_path = os.path.join(FILE_BASE_PATH, file_name)
+
+                # 检查文件是否存在
+                if not os.path.exists(full_file_path):
+                    logging.error(f"File not found: {full_file_path}")
+                    await update_task_status(ocr_id, 'error', f"File not found: {full_file_path}")
+                    queue.task_done()
+                    continue
+
+                # 读取文件内容
+                with open(full_file_path, 'rb') as f:
+                    file_content = f.read()
+
+                # 准备form data
+                data = aiohttp.FormData()
+                data.add_field('file', file_content, filename=original_filename or file_name,
+                              content_type='application/pdf' if file_type == 'pdf' else 'image/*')
+                data.add_field('file_type', file_type)
+                data.add_field('file_size', str(os.path.getsize(full_file_path)))
+
+                if file_type == 'pdf' and page_count:
+                    if range_start:
+                        data.add_field('range_start', str(range_start))
+                    if range_end:
+                        data.add_field('range_end', str(range_end))
+                    data.add_field('page_count', str(page_count))
+
+                async with session.post(API_URL, data=data) as response:
+                    if response.status == 200:
+                        logging.info(f"OCR task {ocr_id} sent to API successfully.")
+                        try:
+                            response_data = await response.json()
+                            logging.info(f"API Response: {response_data}")
+
+                            # 检查OCR处理是否完成
+                            if response_data.get('completed', False):
+                                # 提取OCR结果
+                                ocr_result = ""
+                                result_url = ""
+
+                                # 尝试从不同的字段获取OCR结果
+                                if 'markdown_content' in response_data:
+                                    ocr_result = response_data['markdown_content']
+                                elif 'content' in response_data:
+                                    ocr_result = response_data['content']
+                                elif 'merged_markdown' in response_data:
+                                    # 如果返回的是文件路径，需要读取文件内容
+                                    merged_markdown_path = response_data['merged_markdown']
+                                    try:
+                                        # 直接从共享的静态文件目录读取文件内容
+                                        full_file_path = merged_markdown_path  # 路径已经是 /static/...
+                                        with open(full_file_path, 'r', encoding='utf-8') as f:
+                                            ocr_result = f.read()
+                                        logging.info(f"Successfully read OCR result from {full_file_path}")
+                                    except Exception as file_error:
+                                        logging.error(f"Error reading merged markdown file {merged_markdown_path}: {file_error}")
+
+                                if 'download_url' in response_data:
+                                    result_url = response_data['download_url']
+
+                                # 更新数据库状态为completed，并保存OCR结果
+                                await update_task_status_with_result(ocr_id, 'completed', ocr_result, result_url)
+                            else:
+                                # OCR处理中，保持processing状态
+                                logging.info(f"OCR task {ocr_id} is still processing...")
+
+                        except Exception as json_error:
+                            logging.error(f"Failed to parse JSON response: {json_error}")
+                            response_text = await response.text()
+                            logging.info(f"API Response (text): {response_text}")
+                            # 即使解析失败，也认为处理完成（因为API返回200）
+                            await update_task_status(ocr_id, 'completed')
                     else:
-                        logging.error(f"Failed to send task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format} to API: {response.status}")
-                        logging.error(f"Response: {await response.text()}")
+                        logging.error(f"Failed to send OCR task {ocr_id} to API: {response.status}")
+                        error_text = await response.text()
+                        logging.error(f"Response: {error_text}")
+                        await update_task_status(ocr_id, 'error', f"API error: {response.status}")
+
             except Exception as e:
-                logging.error(f"Exception occurred while sending task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format} to API: {e}")
+                logging.error(f"Exception occurred while processing OCR task {ocr_id}: {e}")
+                await update_task_status(ocr_id, 'error', str(e))
+
             queue.task_done()
-            logging.info(f"Finished processing task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format}. Queue size after processing: {queue.qsize()}")
+            logging.info(f"Finished processing OCR task {ocr_id}. Queue size after processing: {queue.qsize()}")
 
-async def process_queue(queue):
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
+async def update_task_status(ocr_id, status, error_message=None):
+    """更新任务状态"""
+    try:
+        conn = await aiomysql.connect(**DB_CONFIG)
+        async with conn.cursor() as cur:
+            if error_message:
+                await cur.execute("""
+                    UPDATE ocr_files
+                    SET status=%s, error_message=%s, processing_end_time=NOW()
+                    WHERE ocr_id=%s
+                """, (status, error_message, ocr_id))
+            else:
+                await cur.execute("""
+                    UPDATE ocr_files
+                    SET status=%s, processing_end_time=NOW()
+                    WHERE ocr_id=%s
+                """, (status, ocr_id))
+            await conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error updating task status: {e}")
 
-    timeout = aiohttp.ClientTimeout(total=2700)  # 2700秒
+async def update_task_status_with_result(ocr_id, status, ocr_result=None, result_url=None):
+    """更新任务状态并保存OCR结果"""
+    try:
+        conn = await aiomysql.connect(**DB_CONFIG)
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                UPDATE ocr_files
+                SET status=%s, text_content=%s, result_url=%s, processing_end_time=NOW()
+                WHERE ocr_id=%s
+            """, (status, ocr_result, result_url, ocr_id))
+            await conn.commit()
+        conn.close()
+        logging.info(f"Task {ocr_id} completed successfully with OCR result saved to database")
+    except Exception as e:
+        logging.error(f"Error updating task status with result: {e}")
+        # 如果保存结果失败，至少更新状态
+        await update_task_status(ocr_id, status)
+
+async def process_ocr_queue(queue):
+    # OCR API是HTTP，不需要SSL
+    timeout = aiohttp.ClientTimeout(total=300)  # 5分钟超时，OCR处理通常比较快
     semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
 
-    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         tasks = []
         for _ in range(QUEUE_MAX_SIZE):
-            task = asyncio.create_task(process_task(queue, semaphore, session))
-            tasks.append(task)
-        await asyncio.gather(*tasks)
-
-async def fetch_pending_tasks_api(queue):
-    while True:
-        if queue.qsize() < QUEUE_MAX_SIZE:
-            try:
-                conn = await aiomysql.connect(**DB_CONFIG)
-                async with conn.cursor() as cur:
-                    await cur.execute("""
-                        SELECT audio_id, file_name, translation_language, format
-                        FROM sound_files_api
-                        WHERE status='pending'
-                        ORDER BY upload_time ASC
-                        LIMIT %s
-                    """, (QUEUE_MAX_SIZE - queue.qsize(),))
-                    tasks = await cur.fetchall()
-                    for task in tasks:
-                        await cur.execute("UPDATE sound_files_api SET status='processing' WHERE audio_id=%s", (task[0],))
-                        await conn.commit()
-                        await queue.put((task[0], task[1], task[2], task[3]))
-                        logging.info(f"【API】API Task {task[0]} added to queue with file_name {task[1]}, translation_language {task[2]}, and format {task[3]}. Queue size is now {queue.qsize()}")
-            except Exception as e:
-                logging.error(f"【API】Error fetching API tasks from database: {e}")
-            finally:
-                conn.close()
-        else:
-            logging.info("【API】API Queue is full, waiting for space to become available.")
-        await asyncio.sleep(CHECK_INTERVAL)
-
-async def process_task_api(queue, semaphore, session):
-    while True:
-        async with semaphore:
-            audio_id, file_name, translation_language, format = await queue.get()
-            logging.info(f"【API】Processing API task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format}. Queue size before processing: {queue.qsize()}")
-            try:
-                api_url = f"https://{SERVER_ADDRESS}:{NGINX_PORT}/translation_api"
-                async with session.post(api_url, json={"audio_id": audio_id, "file_name": file_name, "translation_language": translation_language, "format": format}) as response:
-                    if response.status == 202:
-                        logging.info(f"【API】API Task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format} sent to API successfully.")
-                    else:
-                        logging.error(f"【API】Failed to send API task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format} to API: {response.status}")
-                        logging.error(f"【API】Response: {await response.text()}")
-            except Exception as e:
-                logging.error(f"【API】Exception occurred while sending API task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format} to API: {e}")
-            queue.task_done()
-            logging.info(f"【API】Finished processing API task {audio_id} with file_name {file_name}, translation_language {translation_language}, and format {format}. Queue size after processing: {queue.qsize()}")
-
-async def process_queue_api(queue):
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
-
-    timeout = aiohttp.ClientTimeout(total=1800)
-    semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = []
-        for _ in range(QUEUE_MAX_SIZE):
-            task = asyncio.create_task(process_task_api(queue, semaphore, session))
+            task = asyncio.create_task(process_ocr_task(queue, semaphore, session))
             tasks.append(task)
         await asyncio.gather(*tasks)
 
 async def main():
     queue = asyncio.Queue(maxsize=QUEUE_MAX_SIZE)
-    fetch_task = asyncio.create_task(fetch_pending_tasks(queue))
-    process_task = asyncio.create_task(process_queue(queue))
+    fetch_task = asyncio.create_task(fetch_pending_ocr_tasks(queue))
+    process_task = asyncio.create_task(process_ocr_queue(queue))
 
-    queue_api = asyncio.Queue(maxsize=QUEUE_MAX_SIZE)
-    fetch_task_api = asyncio.create_task(fetch_pending_tasks_api(queue_api))
-    process_task_api = asyncio.create_task(process_queue_api(queue_api))
-
-    await asyncio.gather(fetch_task, process_task, fetch_task_api, process_task_api)
+    await asyncio.gather(fetch_task, process_task)
 
 if __name__ == "__main__":
     if os.getenv('TAG', '').lower() == 'dev':

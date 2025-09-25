@@ -64,7 +64,6 @@ services:
   #     - TAG=${dev}
   #   volumes:
   #     - ./backend:/var/www/backend
-  #     - ./ai_server/output_txt_files:/mnt/output_txt_files
   #     - /var/run/docker.sock:/var/run/docker.sock
   #     - socket:/tmp
   #     - ./test:/var/www/test
@@ -95,7 +94,6 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl
       - ./nginx:/etc/nginx/templates
       - ./backend:/var/www/backend
-      - ./ai_server:/var/www/ai_server
       - ./nginx/log:/var/log/nginx
       - ./nginx/html:/usr/share/nginx/html
       - socket:/tmp

@@ -44,9 +44,9 @@ transcribe_duration = 0  # transcribeの滞在時間を保存するグローバ�
 transcribe_lock = Lock() # transcribe関数を保護するためのロックを作成
 duration_lock = Lock()   # 滞在時間を保護するためのロックを作成
 
-TABLE_TRANSLATION_API="sound_files_api"
-TABLE_TRANSLATION="sound_files"
-DATABASE="sound_files_db"
+
+TABLE_OCR="ocr_files"
+DATABASE="ocr_files_db"
 HOST = os.getenv("DB_HOST")
 PORT = os.getenv("MYSQL_CONTAINER_PORT")
 PASSWORD = os.getenv("DB_PASSWORD")
@@ -78,6 +78,7 @@ dtime_old = None
 
 SERVER_ADDRESS = os.getenv("SERVER_ADDRESS", "192.168.10.9")
 NGINX_PORT = int(os.getenv("NGINX_PORT", 33380))
+port = int(os.getenv("BACKEND_CONTAINER_PORT", 5000))
 
 def connect_to_database(HOST, DATABASE, PASSWORD, PORT):
     logging.info(">connect_to_database():")
@@ -128,17 +129,162 @@ def close_connection(exception):
     if connection is not None:
         connection.close()
 
-
-@app.route('/api/aibt/transcribe', methods=['POST'])
-def transcribe_audio():
-    logging.info(">transcribe_audio():")
+@app.route('/api/aibt/ocr', methods=['POST'])
+def ocr_request():
+    logging.info(">ocr_request():")
     cursor = None
     connection = None
 
+    try:
+        # 检查请求中是否包含文件
+        if 'file' not in request.files:
+            return jsonify({"error": "没有上传文件"}), 400
 
-@app.route('/api/aibt/get_url', methods=['POST'])
-def get_url():
-    logging.info(">get_url():")
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "文件名为空"}), 400
+
+        # 获取其他参数
+        file_type = request.form.get('file_type', 'unknown')
+        file_size = request.form.get('file_size', '0')
+        range_start = request.form.get('range_start')
+        range_end = request.form.get('range_end')
+        page_count = request.form.get('page_count')
+
+        # 生成唯一的任务ID
+        task_id = str(uuid.uuid4())
+
+        # 确保input_audio_files目录存在
+        upload_dir = os.path.join(os.path.dirname(__file__), 'input_audio_files')
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
+
+        # 保存文件
+        filename = secure_filename(file.filename)
+        if not filename:
+            filename = f"{task_id}_{file_type}"
+
+        # 添加时间戳避免文件名冲突
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{filename}"
+        file_path = os.path.join(upload_dir, filename)
+
+        file.save(file_path)
+        logging.info(f"文件已保存到: {file_path}")
+
+        # 保存到数据库
+        connection = g.connection
+        cursor = connection.cursor()
+
+        # 插入OCR请求记录到数据库（使用ocr_files表）
+        insert_query = f"""
+            INSERT INTO {TABLE_OCR}
+            (file_name, original_filename, file_path, file_size, file_type,
+             page_count, range_start, range_end, status, upload_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+
+        now = datetime.now()
+
+        cursor.execute(insert_query, (
+            filename,  # 处理后的文件名
+            file.filename,  # 原始文件名
+            file_path,  # 文件保存路径
+            int(file_size),
+            file_type,
+            int(page_count) if page_count else None,
+            int(range_start) if range_start else None,
+            int(range_end) if range_end else None,
+            'pending',
+            now
+        ))
+
+        # 获取插入记录的ID作为task_id
+        task_id = cursor.lastrowid
+
+        connection.commit()
+        logging.info(f"OCR请求已保存到数据库，任务ID: {task_id}")
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "message": "OCR请求已提交，正在处理中",
+            "filename": filename
+        }), 200
+
+    except mysql.connector.Error as db_error:
+        logging.error(f"数据库错误: {str(db_error)}")
+        if connection:
+            connection.rollback()
+        return jsonify({"error": f"数据库操作失败: {str(db_error)}"}), 500
+
+    except Exception as e:
+        logging.error(f"OCR请求处理错误: {str(e)}")
+        logging.error(traceback.format_exc())
+        if connection:
+            connection.rollback()
+        return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+
+
+@app.route('/api/aibt/ocr/status/<task_id>', methods=['GET'])
+def get_ocr_status(task_id):
+    logging.info(f">get_ocr_status(): task_id={task_id}")
+
+    try:
+        connection = g.connection
+        cursor = connection.cursor(dictionary=True)
+
+        # 查询任务状态
+        query = f"""
+            SELECT ocr_id, file_name, original_filename, file_path, file_size, file_type,
+                   page_count, range_start, range_end, status, upload_time,
+                   text_content, result_url, error_message, processing_start_time, processing_end_time
+            FROM {TABLE_OCR}
+            WHERE ocr_id = %s
+        """
+
+        cursor.execute(query, (task_id,))
+        result = cursor.fetchone()
+
+        if not result:
+            return jsonify({"error": "任务不存在"}), 404
+
+        return jsonify({
+            "success": True,
+            "task_id": result['ocr_id'],
+            "status": result['status'],
+            "filename": result['file_name'],
+            "original_filename": result['original_filename'],
+            "file_path": result['file_path'],
+            "file_type": result['file_type'],
+            "file_size": result['file_size'],
+            "page_count": result['page_count'],
+            "range_start": result['range_start'],
+            "range_end": result['range_end'],
+            "upload_time": result['upload_time'].isoformat() if result['upload_time'] else None,
+            "processing_start_time": result['processing_start_time'].isoformat() if result['processing_start_time'] else None,
+            "processing_end_time": result['processing_end_time'].isoformat() if result['processing_end_time'] else None,
+            "ocr_result": result['text_content'],
+            "result_url": result['result_url'],
+            "error_message": result['error_message']
+        }), 200
+
+    except mysql.connector.Error as db_error:
+        logging.error(f"数据库错误: {str(db_error)}")
+        return jsonify({"error": f"数据库查询失败: {str(db_error)}"}), 500
+
+    except Exception as e:
+        logging.error(f"查询OCR状态错误: {str(e)}")
+        logging.error(traceback.format_exc())
+        return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
 
 
 @app.route('/api/estimated_completion_time', methods=['GET'])
@@ -146,21 +292,21 @@ def estimated_completion_time():
     try:
         conn = connect_to_database(HOST, DATABASE, PASSWORD, PORT)
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT SUM(audio_length) as total_length
-            FROM sound_files
+        cursor.execute(f"""
+            SELECT SUM(file_size) as total_size
+            FROM {TABLE_OCR}
             WHERE status IN ('pending', 'processing')
         """)
-        total_length = cursor.fetchone()['total_length']
+        total_size = cursor.fetchone()['total_size']
         cursor.close()
         conn.close()
 
-        if total_length is None:
-            total_length = 0
+        if total_size is None:
+            total_size = 0
 
-        # 目安完了時間計算
-        estimated_seconds = total_length / 4
-        # estimated_seconds = total_length / 8
+        # 目安完了時間計算（OCRの場合、ファイルサイズベースで推定）
+        # 1MBあたり約10秒として計算
+        estimated_seconds = (total_size / 1024 / 1024) * 10
         estimated_minutes = estimated_seconds // 60
         estimated_seconds = estimated_seconds % 60
 
@@ -186,27 +332,16 @@ def clean_expired_result_urls():
    # 現在時刻を取得
    current_time = datetime.now()
 
-   # TABLE_TRANSLATION_APIテーブルの処理
+   # OCR_FILESテーブルの処理
    # result_urlとtext_contentをNULLに設定（text_contentがNULLでない場合のみ）
    cursor.execute(f"""
-       UPDATE `{TABLE_TRANSLATION_API}`
+       UPDATE `{TABLE_OCR}`
        SET result_url = NULL, text_content = NULL
-       WHERE translation_end_time IS NOT NULL
+       WHERE processing_end_time IS NOT NULL
        AND status = 'completed'
        AND result_url IS NOT NULL
        AND text_content IS NOT NULL
-       AND TIMESTAMPDIFF(HOUR, translation_end_time, %s) >= 1
-   """, (current_time,))
-
-   # TABLE_TRANSLATIONテーブルの処理
-   # result_urlのみをNULLに設定
-   cursor.execute(f"""
-       UPDATE `{TABLE_TRANSLATION}`
-       SET result_url = NULL
-       WHERE translation_end_time IS NOT NULL
-       AND status = 'completed'
-       AND result_url IS NOT NULL
-       AND TIMESTAMPDIFF(HOUR, translation_end_time, %s) >= 1
+       AND TIMESTAMPDIFF(HOUR, processing_end_time, %s) >= 1
    """, (current_time,))
 
    connection.commit()

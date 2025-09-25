@@ -25,7 +25,6 @@ RUN pip install librosa soundfile
 
 RUN pip3 install numba
 
-COPY util_debug.py .
 COPY . .
 
 CMD ["python3", "AIBT.py"]

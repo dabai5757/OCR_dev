@@ -1,37 +1,37 @@
-## AIBT_dev
-AIBTの開発用リポジトリ
+## OCR_dev
+OCR（光学文字認識）システムの開発用リポジトリ
 
 ## Features
 - 社内ローカル環境で実行できる
 - 推定完了時刻表示
 - 完了後ポップアップ通知（ブラウザ通知有効化必要ある）
-- 対応可能ファイル（mp3、mp4、mpweg、mpga、m4a、wav、webm）
-- 結果出力タイプ（txt、md、rtf）
-- 対応可能言語（日本語、英語、中国語）
-- 文字起こし結果自動ダウンロード
+- 対応可能ファイル（PDF、画像ファイル）
+- 結果出力タイプ（Markdown形式）
+- PDFページ範囲指定機能
+- OCR結果自動表示・ダウンロード
 - 個人情報が残らない
-    - 音声ファイル削除（翻訳完了後に即時削除）
-    - 翻訳結果削除（最大2時間保持）
+    - アップロードファイル削除（OCR完了後に即時削除）
+    - OCR結果削除（最大2時間保持）
 - Auto Monitoring（コンテナが停止した場合など、Slackへ通知）
 - Auto Deploy
-- リアルタイム文字起こしをサポートするAPI
-- 大きめなビデオでも処理できる
-- タイムスタンプ有り無し選択できる
+- 高精度OCR処理（yomitoku_ocrエンジン使用）
+- 大きめなPDFファイルでも処理できる
+- レイアウト保持機能
 
 ## Environment
 prod
 ```bash
-https://192.168.32.232:33400/aibt-prod/
+https://192.168.32.232:33400/ocr-prod/
 ```
 
 stg
 ```bash
-https://192.168.32.232:33390/aibt-stg/
+https://192.168.32.232:33392/ocr-stg/
 ```
 
 dev
 ```bash
-https://192.168.32.184:33380/aibt-dev/
+https://192.168.32.184:33380/ocr-dev/
 ```
 
 ## Auto Deploy
@@ -45,11 +45,12 @@ GitHub Actionsで自動デプロイ時に、指定されたDockerコンテナの
 - サーバー（ジェンツー自体＆アデリー自体）監視 → 互いにSSH接続で監視
 
 ## サービスの使い方（ユーザー向け）
-- https://192.168.32.232:33400/aibt-prod/ をアクセス
-- 【ファイル選択】ボタンを押す　→　ファイル選択　→　【文字起こし】ボタンを押す　→　待つ　→　文字起こし完了（結果自動DLされる）
+- https://192.168.32.232:33400/ocr-prod/ をアクセス
+- 【ファイル選択】ボタンを押す　→　PDFまたは画像ファイル選択　→　PDFの場合はページ範囲を指定　→　【OCR実行】ボタンを押す　→　待つ　→　OCR完了（結果表示・DL可能）
 - 補足：
     - 【ファイル選択】から一度に1つのファイルしかアップロードできないこと
-    -  200MBを超えるファイルのアップロードできないこと
+    - 200MBを超えるファイルのアップロードできないこと
+    - PDFファイルの場合、ページ範囲を指定してOCR処理可能
     - サーバーで未処理のタスクが10件以上の場合、【ファイル選択】が動的に無効化になります。10件以下になったら、まだ【ファイル選択】が動的に有効化になります。
 
 ## localでの実行方法（開発者向け）
@@ -66,7 +67,7 @@ GitHub Actionsで自動デプロイ時に、指定されたDockerコンテナの
 
 - リポジトリDL
     - git clone URL
-    - cd AIBT_dev
+    - cd OCR_dev
 
 - ENVファイル設定
     - ".env.example" を ".env" という名前で COPY する
@@ -77,121 +78,84 @@ GitHub Actionsで自動デプロイ時に、指定されたDockerコンテナの
     - 特に設定する必要がない。
       - 補足：初回だけDLされて、その後は volumes【model_cache_volume_dev】を削除しない限り、再DLしない。
 
-- chrome AI用APIの使い方(簡易版)
-    - 文字起こしを行うAPIには以下の2つのエンドポイントがあります：
-        - 1. **音声ファイルを送信して 、１分後に、結果取得成功の場合は、翻訳結果 ＆ audio_id が返される。失敗の場合は、該当する情報が返されるAPI**
-        - 2. **1で結果取得できない場合は、1で返された`audio_id` を使用して文字起こし結果を取得するAPI**
+- OCR API用の使い方(簡易版)
+    - OCRを行うAPIには以下の2つのエンドポイントがあります：
+        - 1. **PDFまたは画像ファイルを送信して、OCR処理を開始し、task_idが返されるAPI**
+        - 2. **task_idを使用してOCR処理状況と結果を取得するAPI**
 
     - APIの使い方
 
-        - ⓵ 音声ファイルを送信して 、１分後に、結果取得成功の場合は、翻訳結果 ＆ audio_id が返される。失敗の場合は、該当する情報が返されるAPI
+        - ⓵ PDFまたは画像ファイルを送信してOCR処理を開始するAPI
 
-            - 以下のAPIを実行すると、音声ファイルがサーバーに送信され、処理に使用する `audio_id` が返されます。
-            - 音声ファイルパス必要に応じて変更してください。
+            - 以下のAPIを実行すると、ファイルがサーバーに送信され、処理に使用する `task_id` が返されます。
+            - ファイルパスは必要に応じて変更してください。
 
             - リクエスト例
                 ```bash
-                curl -k -X POST http://127.0.0.1:33379/api/aibt/transcribe_api -H "Authorization: Bearer no-key" -F "ID=1234567890" -F "user_name=your_username" -F "audio_file=@\"C:\Users\vbtea\Desktop\audio sample\sample_2.wav\"" -F "initial_prompt=詳しく言うと"　　　　　　　　【httpの場合】
-                curl -k -X POST https://127.0.0.1:33380/api/aibt/transcribe_api -H "Authorization: Bearer no-key" -F "ID=1234567890" -F "user_name=your_username" -F "audio_file=@\"C:\Users\vbtea\Desktop\audio sample\sample_2.wav\"" -F "initial_prompt=詳しく言うと"    　　 【httpsの場合】
+                curl -k -X POST http://127.0.0.1:5560/api/aibt/ocr -F "file=@\"C:\Users\user\Desktop\sample.pdf\"" -F "file_type=pdf" -F "file_size=1024000" -F "range_start=1" -F "range_end=5" -F "page_count=10"
                 ```
 
-            - レスポンス例(翻訳完了の場合：200)
+            - レスポンス例(正常受付の場合：200)
                 ```bash
                 {
-                    "status": "completed",
-                    "data": {
-                        "audio_id": 1,
-                        "message": "映画鑑賞やボーリングを行っております\n"
-                                "この言葉からどんなことを思い浮かべますか 常夏、雄大な自然、グルメ、リラクセーション\n"
-                                "交換受付はいつでも組合事務局で行っております 皆様のご利用をお待ちしております\n"
-                                "全国のニュースでもお伝えしましたが今日は大寒 関東地方の内陸や山沿いではけさ氷点下の冷え込みとなりました\n"
-                                "関東地方はこれから明日にかけて気温があまり上がらず 北部の山沿いで雪が降りやすい見込みです\n"
-                    }
-                }
-                ```
-
-            - レスポンス例(翻訳未完了の場合：202)
-                - statusがpendingの場合
-                ```bash
-                {
-                    "status": "pending",
-                    "data": {
-                        "audio_id": 1,
-                        "message": "null"
-                    }
-                }
-                ```
-                - statusがprocessingの場合
-                ```bash
-                {
-                    "status": "processing",
-                    "data": {
-                        "audio_id": 1,
-                        "message": "null"
-                    }
-                }
-                ```
-
-            - レスポンス例(エラーの場合：404)
-                ```bash
-                {
-                    "status": "error",
-                    "data": {
-                        "audio_id": 1,
-                        "message": "not found"
-                    }
+                    "success": true,
+                    "task_id": 1,
+                    "message": "OCR請求已提交，正在処理中",
+                    "filename": "sample.pdf"
                 }
                 ```
 
             - 補足：
-                - audio_id：MYSQLにある音声データの ID（MySQLのauto_increment機能）
+                - task_id：MySQLにあるOCRタスクのID（MySQLのauto_increment機能）
+                - PDFの場合、range_start/range_endでページ範囲を指定可能
 
-        - ⓶ 文字起こし結果を取得する
-            - ①で結果取得できない場合は、①で返された`audio_id` を使用して文字起こし結果を取得するAPI
+        - ⓶ OCR処理状況と結果を取得するAPI
+            - ①で返された`task_id` を使用してOCR処理状況と結果を取得するAPI
 
             - リクエスト例
                 ```bash
-                curl -X POST http://127.0.0.1:33379/api/aibt/get_api_content -H "Content-Type: application/json" -d "{\"audio_id\": \"1\"}"　　　　　　【httpの場合】
-                curl -k -X POST https://127.0.0.1:33380/api/aibt/get_api_content -H "Content-Type: application/json" -d "{\"audio_id\": \"1\"}"　　　　【httpsの場合】
+                curl -X GET http://127.0.0.1:5560/api/aibt/ocr/status/1
                 ```
 
             - レスポンス例（statusがcompletedの場合）
                 ```bash
                 {
-                    "text_content": "一番めのテスト。\n二番めのテスト。\n..."
+                    "success": true,
+                    "task_id": 1,
+                    "status": "completed",
+                    "ocr_result": "# 文書タイトル\n\n文書の内容...",
+                    "filename": "sample.pdf",
+                    "result_url": "http://example.com/download/result.md"
                 }
                 ```
 
-            - レスポンス例（statusがproccessing＆pendingの場合）
+            - レスポンス例（statusがprocessing＆pendingの場合）
                 ```bash
                 {
-                    "text_content":null
+                    "success": true,
+                    "task_id": 1,
+                    "status": "processing",
+                    "ocr_result": null
                 }
                 ```
 
-            - レスポンス例（送信したaudio_idが存在しない場合）
+            - レスポンス例（送信したtask_idが存在しない場合）
                 ```bash
                 {
-                    "error":"audio_id does not exist"
-                }
-                ```
-
-            - レスポンス例（送信したaudio_idが存在するが、文字起こし結果が自動削除された場合）
-                ```bash
-                {
-                    "error": "\u5185\u90e8\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f\u3002"
+                    "error": "任務不存在"
                 }
                 ```
 
 - ネットワーク作成＆Docker Compose
-    - docker network create ai-network
-    - ubuntuの場合
+    - docker network create ai-network-stg
+    - STG環境の場合
+    　　- docker compose -f "docker-compose-stg.yml" up -d --build
+    - DEV環境の場合
     　　- docker compose -f "docker-compose.yml" up -d --build
-    - macの場合
-    　　- docker compose -f "docker-compose-mac.yml" up -d --build
 
 - 確認
-    - https://127.0.0.1:33380/aibt-dev/
+    - STG: https://127.0.0.1:33392/ocr-stg/
+    - DEV: https://127.0.0.1:33380/ocr-dev/
 
 - 補足
     - DEV環境での開発＆修正が完了したら、developブランチにマージし、STG環境で問題あるかどうかのを確認してください。mainブランチへのマージしないでください。 (mainブランチへのマージは毎月のメンテナンス時に行う)
@@ -227,16 +191,16 @@ GitHub Actionsで自動デプロイ時に、指定されたDockerコンテナの
 - [ERROR] [MY-010020] [Server] Data Dictionary initialization failed.
 
 対策：
-- aibtすべてコンテナ&イメージを削除
-- docker volume rm aibt_mysql_data_volume_dev
-- docker volume create aibt_mysql_data_volume_dev
-- docker compose up -d
+- ocrすべてコンテナ&イメージを削除
+- docker volume rm ocr_mysql_data_volume_stg
+- docker volume create ocr_mysql_data_volume_stg
+- docker compose -f docker-compose-stg.yml up -d
 
 エラー3：
-- MYSQLへの接続ができない（my_dev.cnfの書き込み権限を無くしたので、このエラーが出ないはず。）
+- MYSQLへの接続ができない（my_stg.cnfの書き込み権限を無くしたので、このエラーが出ないはず。）
 
 対策：
-- リポジトリにあるsql/my_dev.cnf の権限を読み取り専用にする（右クリック　→　読み取り専用項目チェック入れ）
+- リポジトリにあるsql/my_stg.cnf の権限を読み取り専用にする（右クリック　→　読み取り専用項目チェック入れ）
 
 エラー4：
 - DBテーブル内容を変更、追加した場合、内容が反映されない問題
@@ -244,6 +208,16 @@ GitHub Actionsで自動デプロイ時に、指定されたDockerコンテナの
 対策：
 - volume 削除
 ```bash
-    docker volume rm aibt_mysql_data_volume_dev
-    docker-compose up
+    docker volume rm ocr_mysql_data_volume_stg
+    docker compose -f docker-compose-stg.yml up -d
+```
+
+エラー5：
+- OCR処理が完了しても前端でtext_contentが空になる問題
+
+対策：
+- db_to_queueサービスとocr-apiサービスの静的ファイル共有を確認
+- docker-compose-stg.ymlでvolume設定を確認
+```bash
+    docker compose -f docker-compose-stg.yml restart db_to_queue
 ```

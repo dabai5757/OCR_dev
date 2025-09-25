@@ -2,31 +2,31 @@ version: '3.8'
 
 services:
 
-#   mysql:
-#     build: ./sql
-#     image: aibt_sql_${stg}
-#     container_name: aibt_mysql_${stg}
-#     hostname: ${DB_HOST_STG}
-#     environment:
-#       MYSQL_ROOT_PASSWORD: root
-#       MYSQL_DATABASE: ${DB_NAME}
-#       MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_STG}
-#       MYSQL_PORT: ${MYSQL_PORT_STG}
-#       DB_HOST: ${DB_HOST_STG}
-#     ports:
-#       - "${MYSQL_PORT_STG}:${MYSQL_CONTAINER_PORT_STG}"
-#     volumes:
-#       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
-#       - ./sql/my_stg.cnf:/etc/mysql/my.cnf
-#       # - aibt_mysql_data:/var/lib/mysql
-#     healthcheck:
-#       test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
-#       interval: 5s
-#       timeout: 60s
-#       retries: 3
-#     networks:
-#       - ai-network-stg
-#     restart: always
+  mysql:
+    build: ./sql
+    image: aibt_sql_${stg}
+    container_name: aibt_mysql_${stg}
+    hostname: ${DB_HOST_STG}
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ocr_files_db
+      MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_STG}
+      MYSQL_PORT: ${MYSQL_PORT_STG}
+      DB_HOST: ${DB_HOST_STG}
+    ports:
+      - "${MYSQL_PORT_STG}:${MYSQL_CONTAINER_PORT_STG}"
+    volumes:
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./sql/my_stg.cnf:/etc/mysql/my.cnf
+      # - aibt_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 60s
+      retries: 3
+    networks:
+      - ai-network-stg
+    restart: always
 
   frontend:
     container_name: aibt_frontend_${stg}
@@ -46,32 +46,32 @@ services:
       - ai-network-stg
     restart: always
 
-#   backend:
-#     container_name: aibt_backend_${stg}
-#     build: ./backend
-#     image: aibt_backend_${stg}
-#     ports:
-#       - "${BACKEND_CONTAINER_PORT_STG}:${BACKEND_CONTAINER_PORT_STG}"
-#     # command: uwsgi --ini /var/www/backend/uwsgi.ini
-#     command: python /var/www/backend/AIBT.py
-#     environment:
-#       - BACKEND_CONTAINER_PORT=${BACKEND_CONTAINER_PORT_STG}
-#       - MYSQL_CONTAINER_PORT=${MYSQL_CONTAINER_PORT_STG}
-#       - DB_HOST=${DB_HOST_STG}
-#       - SERVER_ADDRESS=${SERVER_ADDRESS_STG}
-#       - NGINX_PORT=${NGINX_PORT_STG}
-#     volumes:
-#       - ./backend:/var/www/backend
-#       - ./ai_server/output_txt_files:/mnt/output_txt_files
-#       - /var/run/docker.sock:/var/run/docker.sock
-#       - socket:/tmp
-#     tty: true
-#     depends_on:
-#       - mysql
-#     env_file: .env
-#     networks:
-#       - ai-network-stg
-#     restart: always
+  backend:
+    container_name: aibt_backend_${stg}
+    build: ./backend
+    image: aibt_backend_${stg}
+    ports:
+      - "5560:5560"
+    # command: uwsgi --ini /var/www/backend/uwsgi.ini
+    command: python /var/www/backend/AIBT.py
+    environment:
+      - BACKEND_CONTAINER_PORT=5560
+      - MYSQL_CONTAINER_PORT=${MYSQL_CONTAINER_PORT_STG}
+      - DB_HOST=${DB_HOST_STG}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - SERVER_ADDRESS=${SERVER_ADDRESS_STG}
+      - NGINX_PORT=${NGINX_PORT_STG}
+    volumes:
+      - ./backend:/var/www/backend
+      - /var/run/docker.sock:/var/run/docker.sock
+      - socket:/tmp
+    tty: true
+    depends_on:
+      - mysql
+    env_file: .env
+    networks:
+      - ai-network-stg
+    restart: always
 
   nginx:
     image: nginx:1.24
@@ -92,7 +92,6 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl
       - ./nginx:/etc/nginx/templates
       - ./backend:/var/www/backend
-      - ./ai_server:/var/www/ai_server
       - ./nginx/log:/var/log/nginx
       - ./nginx/html:/usr/share/nginx/html
       - socket:/tmp
@@ -104,30 +103,57 @@ services:
     tty: true
     restart: always
 
-#   db_to_queue:
-#     build: ./db_to_queue
-#     image: aibt_db_to_queue_${stg}
-#     container_name: aibt_db_to_queue_${stg}
-#     environment:
-#       SERVER_ADDRESS: ${SERVER_ADDRESS_STG}
-#       NGINX_PORT: ${NGINX_PORT_STG}
-#       MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_STG}
-#       AI_SERVER_CONTAINER_PORT: ${AI_SERVER_CONTAINER_PORT_STG}
-#       AI_SERVER_CONTAINER_API_PORT: ${AI_SERVER_CONTAINER_API_PORT_STG}
-#       DB_HOST: ${DB_HOST_STG}
-#     depends_on:
-#       mysql:
-#         condition: service_healthy
-#       transcription_1:
-#         condition: service_started
-#     env_file: .env
-#     ports:
-#       - "${db_to_queue_CONTAINER_PORT_STG}:${db_to_queue_CONTAINER_PORT_STG}"
-#     volumes:
-#       - ./db_to_queue/logs/db_to_queue:/logs
-#     networks:
-#       - ai-network-stg
-#     restart: always
+  db_to_queue:
+    build: ./db_to_queue
+    image: aibt_db_to_queue_${stg}
+    container_name: aibt_db_to_queue_${stg}
+    environment:
+      SERVER_ADDRESS: ${SERVER_ADDRESS_STG}
+      NGINX_PORT: ${NGINX_PORT_STG}
+      MYSQL_CONTAINER_PORT: ${MYSQL_CONTAINER_PORT_STG}
+      DB_HOST: ${DB_HOST_STG}
+      DB_PASSWORD: ${DB_PASSWORD}
+      TAG: ${stg}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      backend:
+        condition: service_started
+      ocr-api:
+        condition: service_started
+    env_file: .env
+    ports:
+      - "${db_to_queue_CONTAINER_PORT_STG}:${db_to_queue_CONTAINER_PORT_STG}"
+    volumes:
+      - ./db_to_queue/logs/db_to_queue:/logs
+      - ./backend/input_audio_files:/var/www/backend/input_audio_files
+      - ./yomitoku_ocr/static:/static
+    networks:
+      - ai-network-stg
+    restart: always
+
+  ocr-api:
+    build: ./yomitoku_ocr
+    container_name: aibt_ocr_api_${stg}
+    ports:
+      - "5550:5550"
+    volumes:
+      - ./yomitoku_ocr/app:/app
+      - ./yomitoku_ocr/static:/static
+    environment:
+      - FLASK_APP=main.py
+      - FLASK_ENV=production
+    networks:
+      - ai-network-stg
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: always
+
 
 
 networks:
