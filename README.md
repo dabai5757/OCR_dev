@@ -100,7 +100,7 @@ GitHub Actionsで自動デプロイ時に、指定されたDockerコンテナの
                 {
                     "success": true,
                     "task_id": 1,
-                    "message": "OCR請求已提交，正在処理中",
+                    "message": "OCR請求已提交，,正在処理中",
                     "filename": "sample.pdf"
                 }
                 ```
