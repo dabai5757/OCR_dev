@@ -18,7 +18,7 @@ services:
     volumes:
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
       - ./sql/my_stg.cnf:/etc/mysql/my.cnf
-      # - aibt_mysql_data:/var/lib/mysql
+      - aibt_mysql_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
       interval: 5s
@@ -163,7 +163,7 @@ networks:
 volumes:
   socket:
     name: socket_volume_stg
-  # aibt_mysql_data:
-  #   name: aibt_mysql_data_volume_stg
+  aibt_mysql_data:
+    name: aibt_mysql_data_volume_stg
   model-cache-stg:
     name: model_cache_volume_stg

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import "./App.css";
 
 const SUPPORTED_EXTENSIONS = ["pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"];
+const MAX_FILES = 20;
 const STATUS_LABELS = {
   waiting: "待機中",
   processing: "処理中",
@@ -44,6 +45,7 @@ const isImageFile = (file) => {
 const App = () => {
   const [uploads, setUploads] = useState([]);
   const [activeUploadId, setActiveUploadId] = useState(null);
+  const [selectedFileIds, setSelectedFileIds] = useState(new Set());
   const [isDragging, setIsDragging] = useState(false);
   const [globalError, setGlobalError] = useState("");
   const [toast, setToast] = useState("");
@@ -175,10 +177,22 @@ const App = () => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
 
+    // 检查文件数量限制
+    const currentCount = uploads.length;
+    const availableSlots = MAX_FILES - currentCount;
+
+    if (availableSlots <= 0) {
+      setGlobalError(`ファイル数が上限（${MAX_FILES}個）に達しています。`);
+      return;
+    }
+
+    const filesToProcess = files.slice(0, availableSlots);
+    const exceededCount = files.length - filesToProcess.length;
+
     let rejected = 0;
     const newUploads = [];
 
-    files.forEach((file, index) => {
+    filesToProcess.forEach((file, index) => {
       if (!isPdfFile(file) && !isImageFile(file)) {
         rejected += 1;
         return;
@@ -221,8 +235,18 @@ const App = () => {
       }
     });
 
-    if (rejected) {
-      setGlobalError(`サポートされていないファイルを ${rejected} 件スキップしました。`);
+    // 设置错误消息
+    let errorMessage = "";
+    if (exceededCount > 0) {
+      errorMessage += `上限により${exceededCount}個のファイルをスキップしました。`;
+    }
+    if (rejected > 0) {
+      if (errorMessage) errorMessage += " ";
+      errorMessage += `サポートされていないファイルを${rejected}個スキップしました。`;
+    }
+
+    if (errorMessage) {
+      setGlobalError(errorMessage);
     } else {
       setGlobalError("");
     }
@@ -230,6 +254,7 @@ const App = () => {
     if (newUploads.length) {
       setUploads((prev) => [...newUploads, ...prev]);
       setActiveUploadId(newUploads[0].id);
+      setToast(`${newUploads.length}個のファイルを追加しました。`);
     }
   };
 
@@ -507,10 +532,76 @@ const App = () => {
     fileInputRef.current?.click();
   };
 
+  // 批量操作功能
+  const handleSelectAll = () => {
+    if (selectedFileIds.size === uploads.length) {
+      setSelectedFileIds(new Set());
+    } else {
+      setSelectedFileIds(new Set(uploads.map(upload => upload.id)));
+    }
+  };
+
+  const handleFileSelect = (uploadId, isSelected) => {
+    const newSelected = new Set(selectedFileIds);
+    if (isSelected) {
+      newSelected.add(uploadId);
+    } else {
+      newSelected.delete(uploadId);
+    }
+    setSelectedFileIds(newSelected);
+  };
+
+  const handleBatchOcr = () => {
+    const selectedUploads = uploads.filter(upload => selectedFileIds.has(upload.id));
+    const validUploads = selectedUploads.filter(upload => {
+      if (upload.status === "processing") return false;
+      if (upload.isPdf) {
+        const { ok } = validateRange(upload);
+        return ok;
+      }
+      return true;
+    });
+
+    if (validUploads.length === 0) {
+      setGlobalError("選択したファイルにOCR実行可能なものがありません。");
+      return;
+    }
+
+    validUploads.forEach(upload => {
+      handleStartOcr(upload.id);
+    });
+
+    setToast(`${validUploads.length}個のファイルでOCRを開始しました。`);
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedFileIds.size === 0) return;
+
+    const selectedCount = selectedFileIds.size;
+    selectedFileIds.forEach(uploadId => {
+      handleRemove(uploadId);
+    });
+
+    setSelectedFileIds(new Set());
+    setToast(`${selectedCount}個のファイルを削除しました。`);
+  };
+
   const runningUploads = uploads.filter((item) => item.status === "processing");
   const runningCount = runningUploads.length;
+  const completedUploads = uploads.filter((item) => item.status === "completed");
+  const completedCount = completedUploads.length;
+  const waitingUploads = uploads.filter((item) => item.status === "waiting");
+  const waitingCount = waitingUploads.length;
+  const errorUploads = uploads.filter((item) => item.status === "error");
+  const errorCount = errorUploads.length;
+
   const activeUpload = uploads.find((item) => item.id === activeUploadId) || null;
   const hasCompletedActive = activeUpload?.status === "completed";
+
+  // 计算整体进度
+  const totalProgress = uploads.length > 0
+    ? Math.round((completedCount / uploads.length) * 100)
+    : 0;
 
   return (
     <div
@@ -519,28 +610,29 @@ const App = () => {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="global-running">
-        <span className="global-running-title">実行中の OCR タスク</span>
-        <div className="global-running-list">
-          {runningCount === 0 ? (
-            <span className="global-running-empty">現在実行中のタスクはありません。</span>
-          ) : (
-            runningUploads.map((upload, index) => {
-              const fileSize = formatFileSize(upload.size);
-              const fileType = upload.isPdf ? 'PDF' : '画像';
-              const pageInfo = upload.isPdf && upload.pageCount ? `${upload.pageCount}ページ` : '';
+       <div className="global-running">
+         <span className="global-running-title">実行中の OCR タスク</span>
 
-              return (
-                <div key={upload.id} className="global-running-item">
-                  <div className="running-item-main">
-                    {index + 1}. 大きさ：{fileSize} | タイプ：{fileType}{pageInfo ? ` | ページ数：${pageInfo}` : ''}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+         <div className="global-running-list">
+           {runningCount === 0 ? (
+             <span className="global-running-empty">現在実行中のタスクはありません。</span>
+           ) : (
+             runningUploads.map((upload, index) => {
+               const fileSize = formatFileSize(upload.size);
+               const fileType = upload.isPdf ? 'PDF' : '画像';
+               const pageInfo = upload.isPdf && upload.pageCount ? `${upload.pageCount}ページ` : '';
+
+               return (
+                 <div key={upload.id} className="global-running-item">
+                   <div className="running-item-main">
+                     {index + 1}. 大きさ：{fileSize} | タイプ：{fileType}{pageInfo ? ` | ページ数：${pageInfo}` : ''}
+                   </div>
+                 </div>
+               );
+             })
+           )}
+         </div>
+       </div>
 
       <div className="page">
         {toast && (
@@ -570,131 +662,169 @@ const App = () => {
             ファイル選択
           </button>
           <p className="upload-hint">PDF と画像（JPG / PNG）に対応しています。</p>
+          <p className="file-count-hint">
+            現在のファイル数: {uploads.length} / {MAX_FILES}
+            {uploads.length >= MAX_FILES && <span className="limit-warning"> (上限に達しました)</span>}
+          </p>
           {!pdfLibReady && !pdfLibError && <p className="upload-subhint">PDF プレビューを読み込み中...</p>}
         </div>
 
-        <div className="file-list">
-          {uploads.map((upload) => {
-            const disabled = upload.status === "processing" || upload.loadingPreview;
-            const isActive = upload.id === activeUploadId;
-            return (
-              <div
-                key={upload.id}
-                className={`file-row ${isActive ? "is-active" : ""}`}
-                onClick={() => setActiveUploadId(upload.id)}
+        {uploads.length > 0 && (
+          <div className="batch-toolbar">
+            <div className="batch-select">
+              <label className="select-all-checkbox">
+                <input
+                  type="checkbox"
+                  checked={selectedFileIds.size === uploads.length && uploads.length > 0}
+                  onChange={handleSelectAll}
+                />
+                <span>全選択 ({selectedFileIds.size} / {uploads.length})</span>
+              </label>
+            </div>
+            <div className="batch-actions">
+              <button
+                type="button"
+                className="batch-button primary"
+                disabled={selectedFileIds.size === 0}
+                onClick={handleBatchOcr}
               >
-                <div className="thumb-area">
-                  {upload.loadingPreview ? (
-                    <span className="thumb-loading">生成中...</span>
-                  ) : upload.thumbnail ? (
-                    <img src={upload.thumbnail} alt={upload.name} />
-                  ) : (
-                    <span className="thumb-placeholder">プレビューなし</span>
-                  )}
-                  {upload.isPdf && upload.pageCount && (
-                    <span className="page-tag">{upload.pageCount} ページ</span>
-                  )}
-                </div>
+                選択したファイルでOCR実行 ({selectedFileIds.size})
+              </button>
+              <button
+                type="button"
+                className="batch-button danger"
+                disabled={selectedFileIds.size === 0}
+                onClick={handleBatchDelete}
+              >
+                選択したファイルを削除 ({selectedFileIds.size})
+              </button>
+            </div>
+          </div>
+        )}
 
-                <div className="file-body">
-                  <div className="file-header">
-                    <div className="file-title" title={upload.name}>{upload.name}</div>
-                    <span className={`status-chip status-${upload.status}`}>{STATUS_LABELS[upload.status]}</span>
-                  </div>
-                  <div className="file-meta">
-                    <span>{formatFileSize(upload.size)}</span>
-                    {!upload.isPdf && <span>画像</span>}
-                    {upload.isPdf && upload.pageCount && <span>PDF</span>}
-                  </div>
-
-                  {upload.isPdf && (
-                    <>
-                      <div className="range-label">OCR するページ範囲を指定できます</div>
-                      <div className="range-row">
-                        <label>
-                          開始ページ
-                          <input
-                            type="number"
-                            min={1}
-                            max={upload.pageCount || undefined}
-                            value={upload.rangeStart || ""}
-                            onChange={(event) => handleRangeChange(upload.id, "rangeStart", event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          終了ページ
-                          <input
-                            type="number"
-                            min={1}
-                            max={upload.pageCount || undefined}
-                            value={upload.rangeEnd || ""}
-                            onChange={(event) => handleRangeChange(upload.id, "rangeEnd", event.target.value)}
-                          />
-                        </label>
-                        <span className="range-hint">(全 {upload.pageCount || "-"} ページ)</span>
-                      </div>
-                    </>
-                  )}
-
-                  <div className={`progress-row ${upload.status === "processing" ? "is-processing" : ""}`}>
-                    <div className="progress-bar">
-                      <div
-                        className={`progress-value ${upload.status === "processing" ? "is-animated" : ""}`}
-                        style={upload.status === "processing" ? undefined : { width: `${upload.progress}%` }}
+        <div className="file-list-container">
+          <div className="file-list">
+            {uploads.map((upload) => {
+              const disabled = upload.status === "processing" || upload.loadingPreview;
+              const isActive = upload.id === activeUploadId;
+              const isSelected = selectedFileIds.has(upload.id);
+              return (
+                <div
+                  key={upload.id}
+                  className={`file-row ${isActive ? "is-active" : ""} ${isSelected ? "is-selected" : ""}`}
+                  onClick={() => setActiveUploadId(upload.id)}
+                >
+                  <div className="file-row-content">
+                    <div className="file-checkbox" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => handleFileSelect(upload.id, e.target.checked)}
                       />
                     </div>
-                  </div>
 
-                  {upload.error && <div className="error-text">{upload.error}</div>}
+                    <div className="thumb-area">
+                      {upload.loadingPreview ? (
+                        <span className="thumb-loading">...</span>
+                      ) : upload.thumbnail ? (
+                        <img src={upload.thumbnail} alt={upload.name} />
+                      ) : (
+                        <span className="thumb-placeholder">📄</span>
+                      )}
+                      {upload.isPdf && upload.pageCount && (
+                        <span className="page-tag">{upload.pageCount}</span>
+                      )}
+                    </div>
 
-                  <div className="row-actions">
-                    <button
-                      type="button"
-                      className="primary"
-                      disabled={disabled}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleStartOcr(upload.id);
-                      }}
-                    >
-                      OCR 実行
-                    </button>
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleRemove(upload.id);
-                      }}
-                    >
-                      削除
-                    </button>
+                    <div className="file-body">
+                      <div className="file-info">
+                        <div className="file-header">
+                          <div className="file-title-with-status">
+                            <span className={`status-label status-${upload.status}`}>{STATUS_LABELS[upload.status]}</span>
+                            <div className="file-title" title={upload.name}>{upload.name}</div>
+                          </div>
+                        </div>
+                        <div className="file-meta">
+                          <span>{formatFileSize(upload.size)}</span>
+                          <span>{upload.isPdf ? 'PDF' : '画像'}</span>
+                          {upload.isPdf && upload.pageCount && (
+                            <span>
+                              全{upload.pageCount}ページ | 範囲:
+                              <input
+                                type="number"
+                                min={1}
+                                max={upload.pageCount}
+                                value={upload.rangeStart || ""}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  handleRangeChange(upload.id, "rangeStart", e.target.value);
+                                }}
+                                style={{
+                                  width: '40px',
+                                  border: '1px solid var(--gray-300)',
+                                  borderRadius: '4px',
+                                  padding: '2px 4px',
+                                  fontSize: '0.75rem',
+                                  margin: '0 4px',
+                                  textAlign: 'center'
+                                }}
+                              />
+                              -
+                              <input
+                                type="number"
+                                min={1}
+                                max={upload.pageCount}
+                                value={upload.rangeEnd || ""}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  handleRangeChange(upload.id, "rangeEnd", e.target.value);
+                                }}
+                                style={{
+                                  width: '40px',
+                                  border: '1px solid var(--gray-300)',
+                                  borderRadius: '4px',
+                                  padding: '2px 4px',
+                                  fontSize: '0.75rem',
+                                  margin: '0 4px',
+                                  textAlign: 'center'
+                                }}
+                              />
+                            </span>
+                          )}
+                        </div>
+                        {upload.error && <div className="error-text" style={{fontSize: '0.6875rem', padding: '2px 6px'}}>{upload.error}</div>}
+                      </div>
+
+                       <div className="row-actions">
+                         <button
+                           type="button"
+                           className={`compact-button ${upload.status === 'completed' ? 'success' : 'disabled'}`}
+                           disabled={upload.status !== 'completed'}
+                           onClick={(event) => {
+                             event.stopPropagation();
+                             if (upload.status === 'completed') {
+                               handleDownloadResult(upload.id);
+                             }
+                           }}
+                         >
+                           下載
+                         </button>
+                       </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
 
-          {!uploads.length && (
-            <p className="empty-message">ファイルを選択するとここにリストされます。</p>
-          )}
+            {!uploads.length && (
+              <div style={{padding: '40px 20px', textAlign: 'center', color: 'var(--gray-500)', fontSize: '0.875rem'}}>
+                ファイルを選択するとここにリストされます。
+              </div>
+            )}
+          </div>
         </div>
 
-        {hasCompletedActive && (
-          <section className="result-panel">
-            <div className="result-header">
-              <h2>OCR 結果</h2>
-              <div className="result-actions">
-                <button type="button" onClick={() => handleCopyResult(activeUpload.id)}>コピー</button>
-                <button type="button" onClick={() => handleDownloadResult(activeUpload.id, 'txt')}>TXT 保存</button>
-                <button type="button" onClick={() => handleDownloadResult(activeUpload.id)}>Markdown 保存</button>
-              </div>
-            </div>
-            <div className="result-body">
-              <pre className="result-text">{activeUpload.ocrResult}</pre>
-            </div>
-          </section>
-        )}
+
 
 {!uploads.length && (
           <p className="footnote">「ファイル選択」ボタンからファイルを選ぶか、ここにドラッグ＆ドロップしてください。</p>
