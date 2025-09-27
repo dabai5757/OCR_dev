@@ -54,7 +54,7 @@ services:
   #     - "${BACKEND_CONTAINER_PORT_DEV}:${BACKEND_CONTAINER_PORT_DEV}"
   #     - "5674:5674"
   #   # command: uwsgi --ini /var/www/backend/uwsgi.ini
-  #   command: python /var/www/backend/AIBT.py
+  #   command: uvicorn AIBT:app --host 0.0.0.0 --port ${BACKEND_CONTAINER_PORT_DEV}
   #   environment:
   #     - BACKEND_CONTAINER_PORT=${BACKEND_CONTAINER_PORT_DEV}
   #     - MYSQL_CONTAINER_PORT=${MYSQL_CONTAINER_PORT_DEV}

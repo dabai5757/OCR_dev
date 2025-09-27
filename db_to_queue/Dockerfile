@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE ${db_to_queue_CONTAINER_PORT}
 
 # CMD ["python", "db_to_queue.py"]
-CMD ["bash", "-c", "sleep 30 && python db_to_queue.py"]
+CMD ["bash", "-c", "sleep 30 && uvicorn db_to_queue:app --host 0.0.0.0 --port ${db_to_queue_CONTAINER_PORT:-8080}"]

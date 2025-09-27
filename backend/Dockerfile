@@ -21,10 +21,10 @@ RUN pip install --upgrade pip && \
     pip install -r requirements.txt && \
     pip install requests
 
-RUN pip install librosa soundfile
-
-RUN pip3 install numba
+# librosa/soundfile/numba are installed via requirements.txt, but keep explicit installs in case
+RUN pip install librosa soundfile || true
+RUN pip3 install numba || true
 
 COPY . .
 
-CMD ["python3", "AIBT.py"]
+CMD ["sh", "-c", "uvicorn AIBT:app --host 0.0.0.0 --port ${BACKEND_CONTAINER_PORT:-5560}"]
