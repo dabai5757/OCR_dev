@@ -23,6 +23,7 @@ import re
 import json
 import mimetypes
 import subprocess
+from PyPDF2 import PdfReader, PdfWriter
 # from translation_tasks import check_translation_result
 import asyncio
 import uuid
@@ -145,11 +146,22 @@ def ocr_request():
             return jsonify({"error": "文件名为空"}), 400
 
         # 获取其他参数
-        file_type = request.form.get('file_type', 'unknown')
+        file_type = (request.form.get('file_type') or 'unknown').lower()
         file_size = request.form.get('file_size', '0')
-        range_start = request.form.get('range_start')
-        range_end = request.form.get('range_end')
+        range_start_raw = request.form.get('range_start')
+        range_end_raw = request.form.get('range_end')
         page_count = request.form.get('page_count')
+
+        try:
+            range_start = int(range_start_raw) if range_start_raw else None
+            range_end = int(range_end_raw) if range_end_raw else None
+        except ValueError:
+            return jsonify({"error": "无效的页码范围"}), 400
+
+        if range_start and not range_end:
+            range_end = range_start
+        if range_end and not range_start:
+            range_start = 1
 
         # 生成唯一的任务ID
         task_id = str(uuid.uuid4())
@@ -172,6 +184,42 @@ def ocr_request():
         file.save(file_path)
         logging.info(f"文件已保存到: {file_path}")
 
+        stored_file_size = os.path.getsize(file_path)
+
+        if file_type == 'pdf' and range_start and range_end:
+            try:
+                reader = PdfReader(file_path)
+                total_pages = len(reader.pages)
+
+                if range_start < 1 or range_end > total_pages or range_start > range_end:
+                    os.remove(file_path)
+                    return jsonify({"error": "页码范围超出PDF页面数量"}), 400
+
+                writer = PdfWriter()
+                for page_index in range(range_start - 1, range_end):
+                    writer.add_page(reader.pages[page_index])
+
+                trimmed_filename = f"{os.path.splitext(filename)[0]}_pages_{range_start}-{range_end}.pdf"
+                trimmed_path = os.path.join(upload_dir, trimmed_filename)
+
+                with open(trimmed_path, 'wb') as trimmed_file:
+                    writer.write(trimmed_file)
+
+                os.remove(file_path)
+                filename = trimmed_filename
+                file_path = trimmed_path
+                stored_file_size = os.path.getsize(file_path)
+                logging.info(
+                    "PDF 已根据页码范围提取: %s (总页数 %s -> %s 页)",
+                    file_path,
+                    total_pages,
+                    range_end - range_start + 1
+                )
+            except Exception as pdf_error:
+                logging.error(f"PDF 页码提取失败: {pdf_error}")
+                os.remove(file_path)
+                return jsonify({"error": "PDF 页码提取失败"}), 500
+
         # 保存到数据库
         connection = g.connection
         cursor = connection.cursor()
@@ -190,7 +238,7 @@ def ocr_request():
             filename,  # 处理后的文件名
             file.filename,  # 原始文件名
             file_path,  # 文件保存路径
-            int(file_size),
+            stored_file_size,
             file_type,
             int(page_count) if page_count else None,
             int(range_start) if range_start else None,
@@ -326,33 +374,55 @@ from datetime import datetime
 import logging
 
 def clean_expired_result_urls():
-   connection = connect_to_database(HOST, DATABASE, PASSWORD, PORT)
-   cursor = connection.cursor()
+    connection = connect_to_database(HOST, DATABASE, PASSWORD, PORT)
+    cursor = connection.cursor(dictionary=True)
 
-   # 現在時刻を取得
-   current_time = datetime.now()
+    current_time = datetime.now()
 
-   # OCR_FILESテーブルの処理
-   # result_urlとtext_contentをNULLに設定（text_contentがNULLでない場合のみ）
-   cursor.execute(f"""
-       UPDATE `{TABLE_OCR}`
-       SET result_url = NULL, text_content = NULL
-       WHERE processing_end_time IS NOT NULL
-       AND status = 'completed'
-       AND result_url IS NOT NULL
-       AND text_content IS NOT NULL
-       AND TIMESTAMPDIFF(HOUR, processing_end_time, %s) >= 1
-   """, (current_time,))
+    expiration_query = f"""
+        SELECT ocr_id, file_name, file_path
+        FROM `{TABLE_OCR}`
+        WHERE processing_end_time IS NOT NULL
+          AND status = 'completed'
+          AND text_content IS NOT NULL
+          AND TIMESTAMPDIFF(MINUTE, processing_end_time, %s) >= 1
+    """
 
-   connection.commit()
-   cursor.close()
-   connection.close()
-   # logging.info(f"期限切れのresult_urlをクリアしました。(チェック時刻: {current_time})")
+    cursor.execute(expiration_query, (current_time,))
+    expired_records = cursor.fetchall()
 
-# スケジューラーの設定（1時間ごとに実行）
+    for record in expired_records:
+        file_path = record.get('file_path')
+        file_name = record.get('file_name')
+
+        if not file_path and file_name:
+            file_path = os.path.join(os.path.dirname(__file__), 'input_audio_files', file_name)
+
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logging.info(f"已删除过期OCR文件: {file_path}")
+            except OSError as file_error:
+                logging.error(f"删除过期OCR文件失败: {file_path} - {file_error}")
+
+    cursor.execute(f"""
+        UPDATE `{TABLE_OCR}`
+        SET result_url = NULL,
+            text_content = NULL
+        WHERE processing_end_time IS NOT NULL
+          AND status = 'completed'
+          AND text_content IS NOT NULL
+          AND TIMESTAMPDIFF(MINUTE, processing_end_time, %s) >= 1
+    """, (current_time,))
+
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+# スケジューラーの設定（毎分実行）
 clean_expired_result_urls()
 scheduler = BackgroundScheduler()
-scheduler.add_job(clean_expired_result_urls, 'interval', hours=1)
+scheduler.add_job(clean_expired_result_urls, 'interval', minutes=1)
 # scheduler.add_job(clean_expired_result_urls, 'interval', seconds=10)  # テスト用
 scheduler.start()
 #--------------------------------------------------------------------------------------------------------------------------
