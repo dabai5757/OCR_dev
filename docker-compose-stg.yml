@@ -125,7 +125,6 @@ services:
     volumes:
       - ./db_to_queue/logs/db_to_queue:/logs
       - ./backend/input_audio_files:/var/www/backend/input_audio_files
-      - ./yomitoku_ocr/static:/static
     networks:
       - ai-network
     restart: always
