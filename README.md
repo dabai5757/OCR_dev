@@ -147,7 +147,7 @@ GitHub Actionsで自動デプロイ時に、指定されたDockerコンテナの
                 ```
 
 - ネットワーク作成＆Docker Compose
-    - docker network create ai-network-stg
+    - docker network create ai-network
     - STG環境の場合
     　　- docker compose -f "docker-compose-stg.yml" up -d --build
     - DEV環境の場合

@@ -52,7 +52,7 @@ logger.info("Logging has been initialized successfully.")
 # if AI_SERVER_CONTAINER_PORT is None:
 #     raise ValueError("AI_SERVER_CONTAINER_PORT environment variable is not set")
 
-API_URL = f"http://ocr-api:5550/ocr"
+API_URL = f"http://ocr-api:5000/ocr"
 FILE_BASE_PATH = "/var/www/backend/input_audio_files"  # Docker container path
 
 async def fetch_pending_ocr_tasks(queue):
@@ -131,7 +131,7 @@ async def process_ocr_task(queue, semaphore, session):
                             logging.info(f"API Response: {response_data}")
 
                             # 检查OCR处理是否完成
-                            if response_data.get('completed', False):
+                            if response_data.get('status') == 'success':
                                 # 提取OCR结果
                                 ocr_result = ""
                                 result_url = ""
@@ -153,8 +153,8 @@ async def process_ocr_task(queue, semaphore, session):
                                     except Exception as file_error:
                                         logging.error(f"Error reading merged markdown file {merged_markdown_path}: {file_error}")
 
-                                if 'download_url' in response_data:
-                                    result_url = response_data['download_url']
+                                if 'dl_url' in response_data:
+                                    result_url = response_data['dl_url']
 
                                 # 更新数据库状态为completed，并保存OCR结果
                                 await update_task_status_with_result(ocr_id, 'completed', ocr_result, result_url)

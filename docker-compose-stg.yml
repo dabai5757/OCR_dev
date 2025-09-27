@@ -25,7 +25,7 @@ services:
       timeout: 60s
       retries: 3
     networks:
-      - ai-network-stg
+      - ai-network
     restart: always
 
   frontend:
@@ -43,7 +43,7 @@ services:
       - PORT=${FRONT_CONTAINER_PORT_STG} # 3010
       - FRONT_CONTAINER_PORT=${FRONT_CONTAINER_PORT_STG}
     networks:
-      - ai-network-stg
+      - ai-network
     restart: always
 
   backend:
@@ -70,7 +70,7 @@ services:
       - mysql
     env_file: .env
     networks:
-      - ai-network-stg
+      - ai-network
     restart: always
 
   nginx:
@@ -78,7 +78,7 @@ services:
     container_name: aibt_nginx_${stg}
     env_file: .env
     networks:
-      - ai-network-stg
+      - ai-network
     environment:
       BACKEND_CONTAINER_PORT: ${BACKEND_CONTAINER_PORT_STG}
       SERVER_ADDRESS: ${SERVER_ADDRESS_STG}
@@ -119,8 +119,6 @@ services:
         condition: service_healthy
       backend:
         condition: service_started
-      ocr-api:
-        condition: service_started
     env_file: .env
     ports:
       - "${db_to_queue_CONTAINER_PORT_STG}:${db_to_queue_CONTAINER_PORT_STG}"
@@ -129,35 +127,11 @@ services:
       - ./backend/input_audio_files:/var/www/backend/input_audio_files
       - ./yomitoku_ocr/static:/static
     networks:
-      - ai-network-stg
+      - ai-network
     restart: always
-
-  ocr-api:
-    build: ./yomitoku_ocr
-    container_name: aibt_ocr_api_${stg}
-    ports:
-      - "5550:5550"
-    volumes:
-      - ./yomitoku_ocr/app:/app
-      - ./yomitoku_ocr/static:/static
-    environment:
-      - FLASK_APP=main.py
-      - FLASK_ENV=production
-    networks:
-      - ai-network-stg
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    restart: always
-
-
 
 networks:
-  ai-network-stg:
+  ai-network:
     external: true
 
 volumes:
