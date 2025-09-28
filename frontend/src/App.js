@@ -177,7 +177,7 @@ const App = () => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
 
-    // 检查文件数量限制
+    // ファイル数の上限を確認
     const currentCount = uploads.length;
     const availableSlots = MAX_FILES - currentCount;
 
@@ -235,7 +235,7 @@ const App = () => {
       }
     });
 
-    // 设置错误消息
+    // エラーメッセージを設定
     let errorMessage = "";
     if (exceededCount > 0) {
       errorMessage += `上限により${exceededCount}個のファイルをスキップしました。`;
@@ -345,14 +345,14 @@ const App = () => {
 
       const result = await response.json();
 
-      // 开始轮询检查OCR状态
+      // OCRステータスのポーリングを開始
       pollOcrStatus(uploadId, result.task_id || uploadId);
 
     } catch (error) {
-      console.error('OCR请求失败:', error);
+      console.error('OCRリクエストに失敗しました:', error);
       updateUpload(uploadId, {
         status: "error",
-        error: error.message || "OCR请求失败，请重试"
+        error: error.message || "OCRリクエストに失敗しました。再試行してください"
       });
     }
   };
@@ -366,18 +366,18 @@ const App = () => {
 
     timersRef.current[uploadId] = window.setInterval(async () => {
       try {
-        // 模拟进度增长
+        // 進捗を擬似的に増加させる
         progressValue = Math.min(progressValue + Math.floor(Math.random() * 15) + 5, 95);
 
         updateUpload(uploadId, { progress: progressValue });
 
-        // 实际的状态查询API调用
+        // 実際のステータス取得 API 呼び出し
         try {
           const statusResponse = await fetch(`/api/aibt/ocr/status/${taskId}`);
           if (statusResponse.ok) {
             const statusData = await statusResponse.json();
 
-            // 根据实际状态更新进度
+            // 実際のステータスに基づいて進捗を更新
             if (statusData.status === 'completed' && statusData.ocr_result) {
               clearInterval(timersRef.current[uploadId]);
               delete timersRef.current[uploadId];
@@ -397,17 +397,17 @@ const App = () => {
 
               updateUpload(uploadId, {
                 status: "error",
-                error: "OCR处理失败"
+                error: "OCR処理に失敗しました"
               });
               return;
             }
-            // 如果状态是pending或processing，继续等待
+            // ステータスが pending/processing の場合は待機
           }
         } catch (statusError) {
-          console.error('状态查询失败:', statusError);
+          console.error('ステータス確認に失敗しました:', statusError);
         }
 
-        // 模拟完成条件（作为后备方案）
+        // 擬似的な完了条件（フォールバック）
         if (progressValue >= 90 && Math.random() > 0.7) {
           clearInterval(timersRef.current[uploadId]);
           delete timersRef.current[uploadId];
@@ -423,13 +423,13 @@ const App = () => {
           setActiveUploadId(uploadId);
         }
       } catch (error) {
-        console.error('OCR状态查询失败:', error);
+        console.error('OCRステータス確認に失敗しました:', error);
         clearInterval(timersRef.current[uploadId]);
         delete timersRef.current[uploadId];
 
         updateUpload(uploadId, {
           status: "error",
-          error: "OCR处理失败，请重试"
+          error: "OCR処理に失敗しました。再試行してください"
         });
       }
     }, 3000);
@@ -536,7 +536,7 @@ const App = () => {
     fileInputRef.current?.click();
   };
 
-  // 批量操作功能
+  // バッチ操作
   const handleSelectAll = () => {
     if (selectedFileIds.size === uploads.length) {
       setSelectedFileIds(new Set());

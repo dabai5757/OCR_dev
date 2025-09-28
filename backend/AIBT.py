@@ -106,7 +106,7 @@ def connect_to_database(host: Optional[str], database: str, password: Optional[s
                 logging.info(f"Sleeping {time_to_sleep} seconds before retry")
                 time.sleep(time_to_sleep)
     logging.error("Failed to connect to database after retries")
-    raise RuntimeError("数据库连接失败")
+    raise RuntimeError("データベースへの接続に失敗しました")
 
 
 def get_db() -> Generator[mysql.connector.MySQLConnection, None, None]:
@@ -129,7 +129,7 @@ def normalize_page_range(start: Optional[str], end: Optional[str]) -> tuple[Opti
         range_start = int(start) if start else None
         range_end = int(end) if end else None
     except ValueError:
-        raise HTTPException(status_code=400, detail="无效的页码范围")
+        raise HTTPException(status_code=400, detail="ページ範囲が無効です")
 
     if range_start and not range_end:
         range_end = range_start
@@ -164,7 +164,7 @@ def trim_pdf_if_needed(file_path: str, filename: str, file_type: str,
 
         if range_start < 1 or range_end > total_pages or range_start > range_end:
             os.remove(file_path)
-            raise HTTPException(status_code=400, detail="页码范围超出PDF页面数量")
+            raise HTTPException(status_code=400, detail="指定したページ範囲がPDFのページ数を超えています")
 
         writer = PdfWriter()
         for page_index in range(range_start - 1, range_end):
@@ -188,9 +188,9 @@ def trim_pdf_if_needed(file_path: str, filename: str, file_type: str,
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error(f"PDF range extraction failed: {exc}")
+        logging.error(f"PDFページの抽出に失敗しました: {exc}")
         os.remove(file_path)
-        raise HTTPException(status_code=500, detail="PDF 页码提取失败")
+        raise HTTPException(status_code=500, detail="PDFのページ抽出に失敗しました")
 
 # --------------------------------------------------------------------------------------
 # Routes
@@ -209,7 +209,7 @@ async def ocr_request(
     logging.info(">ocr_request():")
 
     if not file.filename:
-        raise HTTPException(status_code=400, detail="文件名为空")
+        raise HTTPException(status_code=400, detail="ファイル名が空です")
 
     normalized_file_type = (file_type or 'unknown').lower()
     range_start_value, range_end_value = normalize_page_range(range_start, range_end)
@@ -224,7 +224,7 @@ async def ocr_request(
         stored_path = os.path.join(upload_dir, stored_filename)
 
         save_upload_file(file, stored_path)
-        logging.info(f"文件已保存到: {stored_path}")
+        logging.info(f"ファイルを保存しました: {stored_path}")
 
         stored_path, stored_filename, stored_file_size = trim_pdf_if_needed(
             stored_path,
@@ -265,21 +265,21 @@ async def ocr_request(
             content={
                 "success": True,
                 "task_id": task_db_id,
-                "message": "OCR请求已提交，正在处理中",
+                "message": "OCRリクエストを受け付けました。処理中です",
                 "filename": stored_filename
             }
         )
     except mysql.connector.Error as db_error:
-        logging.error(f"数据库错误: {db_error}")
+        logging.error(f"データベースエラー: {db_error}")
         connection.rollback()
-        raise HTTPException(status_code=500, detail=f"数据库操作失败: {db_error}")
+        raise HTTPException(status_code=500, detail=f"データベース操作に失敗しました: {db_error}")
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error(f"OCR请求处理错误: {exc}")
+        logging.error(f"OCRリクエスト処理でエラーが発生しました: {exc}")
         logging.error(traceback.format_exc())
         connection.rollback()
-        raise HTTPException(status_code=500, detail=f"服务器内部错误: {exc}")
+        raise HTTPException(status_code=500, detail=f"サーバー内部エラーが発生しました: {exc}")
 
 
 @app.get("/api/aibt/ocr/status/{task_id}")
@@ -300,7 +300,7 @@ async def get_ocr_status(task_id: int, connection: mysql.connector.MySQLConnecti
         cursor.close()
 
         if not result:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            raise HTTPException(status_code=404, detail="指定されたタスクは存在しません")
 
         return JSONResponse(
             status_code=200,
@@ -325,14 +325,14 @@ async def get_ocr_status(task_id: int, connection: mysql.connector.MySQLConnecti
             }
         )
     except mysql.connector.Error as db_error:
-        logging.error(f"数据库错误: {db_error}")
-        raise HTTPException(status_code=500, detail=f"数据库查询失败: {db_error}")
+        logging.error(f"データベースエラー: {db_error}")
+        raise HTTPException(status_code=500, detail=f"データベースクエリに失敗しました: {db_error}")
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error(f"查询OCR状态错误: {exc}")
+        logging.error(f"OCRステータスの取得でエラーが発生しました: {exc}")
         logging.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"服务器内部错误: {exc}")
+        raise HTTPException(status_code=500, detail=f"サーバー内部エラーが発生しました: {exc}")
 
 
 @app.get("/api/estimated_completion_time")
@@ -361,8 +361,8 @@ async def estimated_completion_time(connection: mysql.connector.MySQLConnection 
 
         return JSONResponse(status_code=200, content={"estimated_time": estimated_time})
     except mysql.connector.Error as db_error:
-        logging.error(f"数据库错误: {db_error}")
-        raise HTTPException(status_code=500, detail=f"数据库查询失败: {db_error}")
+        logging.error(f"データベースエラー: {db_error}")
+        raise HTTPException(status_code=500, detail=f"データベースクエリに失敗しました: {db_error}")
     except Exception as exc:
         logging.error(f"Error calculating estimated completion time: {exc}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
@@ -404,9 +404,9 @@ def clean_expired_result_urls() -> None:
         if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
-                logging.info(f"已删除过期OCR文件: {file_path}")
+                logging.info(f"期限切れのOCRファイルを削除しました: {file_path}")
             except OSError as file_error:
-                logging.error(f"删除过期OCR文件失败: {file_path} - {file_error}")
+                logging.error(f"期限切れOCRファイルの削除に失敗しました: {file_path} - {file_error}")
 
     cursor.execute(f"""
         UPDATE `{TABLE_OCR}`
