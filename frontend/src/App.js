@@ -252,7 +252,11 @@ const App = () => {
     }
 
     if (newUploads.length) {
-      setUploads((prev) => [...newUploads, ...prev]);
+      setUploads((prev) => {
+        const updated = [...newUploads, ...prev];
+        setSelectedFileIds(new Set(updated.map((item) => item.id)));
+        return updated;
+      });
       setActiveUploadId(newUploads[0].id);
       setToast(`${newUploads.length}個のファイルを追加しました。`);
     }
@@ -598,10 +602,41 @@ const App = () => {
   const activeUpload = uploads.find((item) => item.id === activeUploadId) || null;
   const hasCompletedActive = activeUpload?.status === "completed";
 
-  // 计算整体进度
-  const totalProgress = uploads.length > 0
-    ? Math.round((completedCount / uploads.length) * 100)
+  const hasSelection = selectedFileIds.size > 0;
+  const summaryUploads = hasSelection
+    ? uploads.filter((item) => selectedFileIds.has(item.id))
+    : uploads;
+
+  const summaryStats = summaryUploads.reduce(
+    (acc, item) => {
+      acc.total += 1;
+      if (item.status === "completed") acc.completed += 1;
+      if (item.status === "processing") acc.processing += 1;
+      if (item.status === "waiting") acc.waiting += 1;
+      if (item.status === "error") acc.error += 1;
+      return acc;
+    },
+    { total: 0, completed: 0, processing: 0, waiting: 0, error: 0 }
+  );
+
+  const summaryProgress = summaryStats.total > 0
+    ? Math.round((summaryStats.completed / summaryStats.total) * 100)
     : 0;
+
+  const summaryTitle = hasSelection
+    ? `選択中 ${summaryStats.total} 件`
+    : `全体 ${summaryStats.total} 件（最大20件）`;
+
+  const isSummaryComplete = summaryStats.total > 0 && summaryStats.completed === summaryStats.total;
+  const summaryStatusLabel = (() => {
+    if (summaryStats.total === 0) return "";
+    if (summaryStats.error > 0) return "ステータス: エラーあり";
+    if (!isSummaryComplete) {
+      if (summaryStats.processing > 0) return "ステータス: 処理中";
+      if (summaryStats.waiting > 0) return "ステータス: 待機中";
+    }
+    return "ステータス: 完了";
+  })();
 
   return (
     <div
@@ -661,12 +696,35 @@ const App = () => {
           <button type="button" className="select-button" onClick={handleSelectFilesClick}>
             ファイル選択
           </button>
-          <p className="upload-hint">PDF と画像（JPG / PNG）に対応しています。</p>
-          <p className="file-count-hint">
-            現在のファイル数: {uploads.length} / {MAX_FILES}
-            {uploads.length >= MAX_FILES && <span className="limit-warning"> (上限に達しました)</span>}
-          </p>
+          <p className="upload-hint">PDF・JPG・PNG ファイルを選択し、緑色の OCR ボタンを押してください。</p>
           {!pdfLibReady && !pdfLibError && <p className="upload-subhint">PDF プレビューを読み込み中...</p>}
+
+          {summaryStats.total > 0 && (
+            <div className="summary-progress" aria-busy={!isSummaryComplete}>
+              <div className="summary-progress-header">
+                <span className="summary-progress-title">{summaryTitle}</span>
+                <span className="summary-progress-count">{summaryStats.completed} / {summaryStats.total} 完了</span>
+              </div>
+              <div
+                className="summary-progress-bar"
+                role="progressbar"
+                aria-valuenow={summaryProgress}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className={`summary-progress-value ${!isSummaryComplete ? "is-animated" : ""}`}
+                  style={{ width: `${summaryProgress}%` }}
+                />
+              </div>
+              <div className="summary-progress-status">
+                <span>{summaryStatusLabel}</span>
+                <span>処理中 {summaryStats.processing}</span>
+                <span>待機中 {summaryStats.waiting}</span>
+                <span>エラー {summaryStats.error}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {uploads.length > 0 && (
@@ -807,7 +865,7 @@ const App = () => {
                              }
                            }}
                          >
-                           下載
+                           ダウンロード
                          </button>
                        </div>
                     </div>
