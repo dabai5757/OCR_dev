@@ -71,7 +71,7 @@ server {
         proxy_read_timeout 300s;
     }
 
-    location /aibt-${TAG}/ {
+    location /ocr-${TAG}/ {
 
         proxy_pass http://frontend;
         proxy_set_header Host $host;

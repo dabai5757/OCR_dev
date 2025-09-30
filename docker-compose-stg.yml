@@ -39,7 +39,7 @@ services:
     env_file: .env
     environment:
       - REACT_APP_NODE_ENV=STG #REACT App.js
-      - PUBLIC_URL=/aibt-stg # static/js/bundle.js
+      - PUBLIC_URL=/ocr-stg # static/js/bundle.js
       - PORT=${FRONT_CONTAINER_PORT_STG} # 3010
       - FRONT_CONTAINER_PORT=${FRONT_CONTAINER_PORT_STG}
     networks:
