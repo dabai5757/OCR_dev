@@ -218,6 +218,7 @@ const App = () => {
         thumbnail: "",
         loadingPreview: isPdf,
         ocrResult: "",
+        autoDownloaded: false,
         createdAt: Date.now()
       };
 
@@ -318,7 +319,8 @@ const App = () => {
     updateUpload(uploadId, {
       status: "processing",
       progress: 5,
-      error: ""
+      error: "",
+      autoDownloaded: false
     });
 
     try {
@@ -376,6 +378,7 @@ const App = () => {
           const statusResponse = await fetch(`/api/aibt/ocr/status/${taskId}`);
           if (statusResponse.ok) {
             const statusData = await statusResponse.json();
+            const target = uploads.find((item) => item.id === uploadId);
 
             // 実際のステータスに基づいて進捗を更新
             if (statusData.status === 'completed' && statusData.ocr_result) {
@@ -385,10 +388,19 @@ const App = () => {
               updateUpload(uploadId, {
                 progress: 100,
                 status: "completed",
-                ocrResult: statusData.ocr_result
+                ocrResult: statusData.ocr_result,
+                autoDownloaded: true
               });
 
-              setToast("OCR が完了しました。結果を確認してください。");
+              const downloadContext = target
+                ? { ...target, ocrResult: statusData.ocr_result }
+                : { name: `ocr-result-${uploadId}`, ocrResult: statusData.ocr_result };
+              downloadOcrResultFile(downloadContext, 'markdown', {
+                contentOverride: statusData.ocr_result,
+                autoTriggered: true
+              });
+
+              setToast("OCR が完了し、自動ダウンロードしました。");
               setActiveUploadId(uploadId);
               return;
             } else if (statusData.status === 'error') {
@@ -413,13 +425,24 @@ const App = () => {
           delete timersRef.current[uploadId];
 
           const target = uploads.find((item) => item.id === uploadId);
+          const fallbackResult = target
+            ? buildResultMarkdown(target)
+            : '# OCR 結果\n\n- ステータス: 完了\n\n---\n\n> OCR テキストは現在利用できません。';
           updateUpload(uploadId, {
             progress: 100,
             status: "completed",
-            ocrResult: buildResultMarkdown(target)
+            ocrResult: fallbackResult,
+            autoDownloaded: true
           });
 
-          setToast("OCR が完了しました。結果を確認してください。");
+          if (target) {
+            downloadOcrResultFile({ ...target, ocrResult: fallbackResult }, 'markdown', {
+              contentOverride: fallbackResult,
+              autoTriggered: true
+            });
+          }
+
+          setToast("OCR が完了し、自動ダウンロードしました。");
           setActiveUploadId(uploadId);
         }
       } catch (error) {
@@ -499,37 +522,51 @@ const App = () => {
     }
   };
 
+  const downloadOcrResultFile = (upload, format = 'markdown', options = {}) => {
+    if (!upload) return;
+
+    const { contentOverride = null, autoTriggered = false } = options;
+    const ocrContent = typeof contentOverride === 'string' ? contentOverride : upload.ocrResult;
+    if (!ocrContent) return;
+
+    const baseName = upload.name?.replace(/\.[^.]+$/, "") || "ocr-result";
+    const link = document.createElement("a");
+    let url = "";
+
+    if (format === 'txt') {
+      // Extract plain text from markdown template when available
+      const plainText = ocrContent.replace(/^# OCR 結果\n\n.*?\n\n---\n\n> .*?\n\n/, '');
+      const blob = new Blob([plainText], { type: "text/plain;charset=utf-8" });
+      url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = `${baseName}.txt`;
+    } else {
+      const blob = new Blob([ocrContent], { type: "text/markdown;charset=utf-8" });
+      url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = `${baseName}.md`;
+    }
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    if (autoTriggered) {
+      return;
+    }
+
+    if (format === 'txt') {
+      setToast("テキストファイルをダウンロードしました。");
+    } else {
+      setToast("Markdown ファイルをダウンロードしました。");
+    }
+  };
+
   const handleDownloadResult = (uploadId, format = 'markdown') => {
     const target = uploads.find((item) => item.id === uploadId);
     if (!target?.ocrResult) return;
-
-    const baseName = target.name?.replace(/\.[^.]+$/, "") || "ocr-result";
-
-    if (format === 'txt') {
-      // Extract plain text from markdown
-      const plainText = target.ocrResult.replace(/^# OCR 結果\n\n.*?\n\n---\n\n> .*?\n\n/, '');
-      const blob = new Blob([plainText], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${baseName}.txt`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      setToast("テキストファイルをダウンロードしました。");
-    } else {
-      const blob = new Blob([target.ocrResult], { type: "text/markdown;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${baseName}.md`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      setToast("Markdown ファイルをダウンロードしました。");
-    }
+    downloadOcrResultFile(target, format);
   };
 
   const handleSelectFilesClick = () => {
