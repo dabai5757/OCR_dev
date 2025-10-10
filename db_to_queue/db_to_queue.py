@@ -55,7 +55,7 @@ async def fetch_pending_ocr_tasks(queue: asyncio.Queue, stop_event: asyncio.Even
                     await cur.execute(
                         """
                         SELECT ocr_id, file_name, original_filename, file_path, file_type,
-                               page_count, range_start, range_end
+                               page_count, range_start, range_end, user_name
                         FROM ocr_files
                         WHERE status='pending'
                         ORDER BY upload_time ASC
@@ -104,11 +104,11 @@ async def process_ocr_task(queue: asyncio.Queue, semaphore: asyncio.Semaphore,
             break
 
         async with semaphore:
-            ocr_id, file_name, original_filename, file_path, file_type, page_count, range_start, range_end = task
+            ocr_id, file_name, original_filename, file_path, file_type, page_count, range_start, range_end, user_name = task
 
             logger.info(
-                "Processing OCR task %s with file_name %s, file_type %s. Queue size before processing: %s",
-                ocr_id, file_name, file_type, queue.qsize()
+                "Processing OCR task %s with file_name %s, file_type %s, user_name %s. Queue size before processing: %s",
+                ocr_id, file_name, file_type, user_name, queue.qsize()
             )
 
             try:
@@ -132,6 +132,10 @@ async def process_ocr_task(queue: asyncio.Queue, semaphore: asyncio.Semaphore,
                               content_type='application/pdf' if file_type == 'pdf' else 'image/*')
                 data.add_field('file_type', file_type)
                 data.add_field('file_size', str(os.path.getsize(full_file_path)))
+
+                # 添加user_name参数（如果存在）
+                if user_name:
+                    data.add_field('user_name', user_name)
 
                 if file_type == 'pdf' and page_count:
                     if range_start:
@@ -242,7 +246,7 @@ async def update_task_status_with_result(ocr_id, status, ocr_result=None, result
 
 
 async def process_ocr_queue(queue: asyncio.Queue, stop_event: asyncio.Event, worker_count: int):
-    timeout = aiohttp.ClientTimeout(total=300)
+    timeout = aiohttp.ClientTimeout(total=1200)  # 20分钟 = 1200秒
     semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:

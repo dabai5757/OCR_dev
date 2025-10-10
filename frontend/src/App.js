@@ -750,7 +750,7 @@ const App = () => {
                 aria-valuemax={100}
               >
                 <div
-                  className={`summary-progress-value ${!isSummaryComplete ? "is-animated" : ""}`}
+                  className={`summary-progress-value ${summaryStats.processing > 0 ? "is-animated" : ""}`}
                   style={{ width: `${summaryProgress}%` }}
                 />
               </div>
