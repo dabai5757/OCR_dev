@@ -112,28 +112,28 @@ async def process_ocr_task(queue: asyncio.Queue, semaphore: asyncio.Semaphore,
             )
 
             try:
-                # 构建完整的文件路径
+                # 完全なファイルパスを構築
                 full_file_path = os.path.join(FILE_BASE_PATH, file_name)
 
-                # 检查文件是否存在
+                # ファイルが存在するか確認
                 if not os.path.exists(full_file_path):
                     logger.error(f"File not found: {full_file_path}")
                     await update_task_status(ocr_id, 'error', f"File not found: {full_file_path}")
                     queue.task_done()
                     continue
 
-                # 读取文件内容
+                # ファイル内容を読み込む
                 with open(full_file_path, 'rb') as f:
                     file_content = f.read()
 
-                # 准备form data
+                # フォームデータを準備
                 data = aiohttp.FormData()
                 data.add_field('file', file_content, filename=original_filename or file_name,
                               content_type='application/pdf' if file_type == 'pdf' else 'image/*')
                 data.add_field('file_type', file_type)
                 data.add_field('file_size', str(os.path.getsize(full_file_path)))
 
-                # 添加user_name参数（如果存在）
+                # user_nameパラメータを追加（存在する場合）
                 if user_name:
                     data.add_field('user_name', user_name)
 
@@ -151,23 +151,23 @@ async def process_ocr_task(queue: asyncio.Queue, semaphore: asyncio.Semaphore,
                             response_data = await response.json()
                             logger.info(f"API Response: {response_data}")
 
-                            # 检查OCR处理是否完成
+                            # OCR処理が完了したか確認
                             if response_data.get('status') == 'success':
-                                # 提取OCR结果
+                                # OCR結果を抽出
                                 ocr_result = ""
                                 result_url = ""
 
-                                # 尝试从不同的字段获取OCR结果
+                                # 異なるフィールドからOCR結果を取得しようとする
                                 if 'markdown_content' in response_data:
                                     ocr_result = response_data['markdown_content']
                                 elif 'content' in response_data:
                                     ocr_result = response_data['content']
                                 elif 'merged_markdown' in response_data:
-                                    # 如果返回的是文件路径，需要读取文件内容
+                                    # 返されたファイルパスからファイル内容を読み込む必要がある
                                     merged_markdown_path = response_data['merged_markdown']
                                     try:
-                                        # 直接从共享的静态文件目录读取文件内容
-                                        full_file_path = merged_markdown_path  # 路径已经是 /static/...
+                                        # 共有静的ファイルディレクトリから直接ファイル内容を読み込む
+                                        full_file_path = merged_markdown_path  # パスは既に /static/... の形式
                                         with open(full_file_path, 'r', encoding='utf-8') as f:
                                             ocr_result = f.read()
                                         logger.info(f"Successfully read OCR result from {full_file_path}")
@@ -177,17 +177,17 @@ async def process_ocr_task(queue: asyncio.Queue, semaphore: asyncio.Semaphore,
                                 if 'dl_url' in response_data:
                                     result_url = response_data['dl_url']
 
-                                # 更新数据库状态为completed，并保存OCR结果
+                                # データベースステータスをcompletedに更新し、OCR結果を保存
                                 await update_task_status_with_result(ocr_id, 'completed', ocr_result, result_url)
                             else:
-                                # OCR处理中，保持processing状态
+                                # OCR処理中、processingステータスを維持
                                 logger.info(f"OCR task {ocr_id} is still processing...")
 
                         except Exception as json_error:
                             logger.error(f"Failed to parse JSON response: {json_error}")
                             response_text = await response.text()
                             logger.info(f"API Response (text): {response_text}")
-                            # 即使解析失败，也认为处理完成（因为API返回200）
+                            # 解析に失敗しても処理完了とみなす（APIが200を返したため）
                             await update_task_status(ocr_id, 'completed')
                     else:
                         logger.error(f"Failed to send OCR task {ocr_id} to API: {response.status}")
@@ -205,7 +205,7 @@ async def process_ocr_task(queue: asyncio.Queue, semaphore: asyncio.Semaphore,
     logger.info("Process task loop stopped.")
 
 async def update_task_status(ocr_id, status, error_message=None):
-    """更新任务状态"""
+    """タスクステータスを更新"""
     try:
         conn = await aiomysql.connect(**DB_CONFIG)
         async with conn.cursor() as cur:
@@ -227,7 +227,7 @@ async def update_task_status(ocr_id, status, error_message=None):
         logger.error(f"Error updating task status: {exc}")
 
 async def update_task_status_with_result(ocr_id, status, ocr_result=None, result_url=None):
-    """更新任务状态并保存OCR结果"""
+    """タスクステータスを更新し、OCR結果を保存"""
     try:
         conn = await aiomysql.connect(**DB_CONFIG)
         async with conn.cursor() as cur:
@@ -241,12 +241,12 @@ async def update_task_status_with_result(ocr_id, status, ocr_result=None, result
         logger.info(f"Task {ocr_id} completed successfully with OCR result saved to database")
     except Exception as exc:
         logger.error(f"Error updating task status with result: {exc}")
-        # 如果保存结果失败，至少更新状态
+        # 結果の保存に失敗した場合、少なくともステータスを更新
         await update_task_status(ocr_id, status)
 
 
 async def process_ocr_queue(queue: asyncio.Queue, stop_event: asyncio.Event, worker_count: int):
-    timeout = aiohttp.ClientTimeout(total=1200)  # 20分钟 = 1200秒
+    timeout = aiohttp.ClientTimeout(total=1200)  # 20分 = 1200秒
     semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
